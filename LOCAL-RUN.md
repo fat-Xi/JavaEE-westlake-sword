@@ -46,7 +46,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\local.ps1 stop
 
 ## 本机环境
 
-AI 模型已按本机 `.env.local` 配置。密钥由后端读取，前端不读取或保存；修改 `AI_BASE_URL`、`AI_MODEL`、`AI_API_KEY` 或 `AI_TIMEOUT_SECONDS` 后，执行 `local.ps1 restart-backend`。模型无法调用时，AI 页面会提供资料检索降级结果。详细说明见 [AI 问答](docs/ai.md)。
+AI 模型按 `.env.local` 配置。按仓库所有者要求，`.env.example` 已包含共享模型的真实配置；队友可复制为 `.env.local`，并修改本机软件路径和数据库账号密码。已有本地配置时，只合并四个 `AI_` 配置项。密钥由后端读取，前端不读取或保存；修改 `AI_BASE_URL`、`AI_MODEL`、`AI_API_KEY` 或 `AI_TIMEOUT_SECONDS` 后，执行 `local.ps1 restart-backend`。模型无法调用时，AI 页面会提供资料检索降级结果。详细说明见 [AI 问答](docs/ai.md)。
 
 - Java：`E:\Program Files\Java\jdk-25`。
 - Node.js：`E:\Program Files\nodejs`。
@@ -54,7 +54,7 @@ AI 模型已按本机 `.env.local` 配置。密钥由后端读取，前端不读
 - 开发库：`westlake_sword`；自动化测试库：`westlake_v6_test`。
 - 数据库文件、Maven 下载缓存及日志：`E:\实验\Java课设\tmp\westlake-runtime`。
 - 数据库连接账号和本机路径放在 `.env.local`，该文件已被 Git 忽略。项目原有 `application.properties` 保留不变。
-- 本机运行配置尚未提交或推送。模块开发时，环境配置与业务改动应分开提交。
+- 启动辅助文件与共享模型配置已提交；本机 `.env.local`、数据库、日志和上传文件仍保留在本机。
 
 日志位于运行目录的 `logs` 文件夹，分别为 `backend.log`、`backend.error.log`、`frontend.log`、`frontend.error.log`、`mysql.log` 和 `mysql.error.log`。
 
