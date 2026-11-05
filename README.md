@@ -31,7 +31,7 @@ Vue 3 + Java + Spring Boot + MySQL 四角色课程项目，位于桌面 westlake
 - 四角色个人资料持久化，只有参会者有兴趣标签；六个演示账号补齐资料。
 - 一年期签到样例：demo_user未签到、demo_checked已签到、demo_pending报名待审；另有待审核办会申请。
 
-详细规则、接口和后续开发见[开发交接.md](开发交接.md)。地图、AI、热点业务仍留空；没有直播推流或自动录制服务。本轮未修改正式需求Word和汇报PPT。
+详细规则、接口和后续开发见[开发交接.md](开发交接.md)。地图和热点业务仍留空；AI 问答见下文。没有直播推流或自动录制服务，本轮未修改正式需求Word和汇报PPT。
 
 ## 测试
 
@@ -46,3 +46,21 @@ Vue 3 + Java + Spring Boot + MySQL 四角色课程项目，位于桌面 westlake
 - ContentApi的公开内容接口补充nick/avatar，已有created作为发表时间；/posts/mine补充event_title/event_status/nick/avatar，不返回电话邮箱。头像网名取当前个人资料。
 - PostList.vue统一展示作者与时间；CommunityPage.vue区分公共/本人未公开列表；ProfilePage.vue按COMMENT/WALL过滤个人记录。
 - 独立测试库运行npm run test:community，已通过36次接口检查及浏览器验证：两个作者互相可见、待审及驳回隔离、个人记录归属、真实表单提交、提交后清空及390px布局。截图在test-results/community。
+
+## 个性化议程推荐
+
+会议议程页的推荐支持完整兴趣标签匹配、实际收藏热度兜底、已结束和已加入过滤、跨会议日程冲突提示，以及加入日程后自动更新。最多返回 6 项，优先展示无冲突的议程。接口字段、排序规则与测试方式见 [推荐模块说明](docs/recommendations.md)。
+
+独立测试环境中，在 web 目录运行 `npm run test:recommend`；请使用测试库与 5174/8081 端口。
+
+## 议题提问箱
+
+会议提问支持全会或指定议程、审核可见性隔离、赞同与撤销、精选排序、人工答复、关闭和重开。管理员在“内容审核”筛选会议和议程进行处理。赞同票与独立单选投票分开统计，发表时间显示为北京时间。
+
+新增的三个 questions 字段及议程外键通过 schema.sql/Upgrade 增量创建，旧问题保留为全会提问。接口、状态规则与数据库变更见 [提问箱说明](docs/questions.md)。独立测试环境在 web 目录运行 `npm run test:questions`。
+
+## AI 会议问答
+
+全站“AI 问答”支持直接查询公开会议、可报名活动及本人报名/日程/签到/通知，并解答参会者使用平台的问题。选择已通过报名的会议后，可检索该会议的公开资料并调用 OpenAI 兼容模型，回答附来源。越权、无关或无依据的问题拒答；模型不可用时降级为资料检索结果。页面不展示模型配置提示。密钥只从后端环境读取，本机存于被忽略的 `.env.local`；共享配置参考 `.env.example`。
+
+接入、权限、检索边界和模拟模型测试见 [AI 问答说明](docs/ai.md)。独立模拟环境在 web 目录运行 `npm run test:ai`，不会使用真实模型密钥。

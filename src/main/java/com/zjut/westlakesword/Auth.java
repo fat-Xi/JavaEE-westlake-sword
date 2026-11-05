@@ -17,7 +17,12 @@ public class Auth {
   }
 
   public long id(HttpSession session) {
-    Object id = session.getAttribute("uid");
+    Object id;
+    try {
+      id = session.getAttribute("uid");
+    } catch (IllegalStateException e) {
+      id = null;
+    }
     if (id == null) throw new ResponseStatusException(
       HttpStatus.UNAUTHORIZED,
       "请先登录"

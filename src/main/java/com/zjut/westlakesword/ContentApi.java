@@ -37,10 +37,6 @@ public class ContentApi {
 
   record Review(boolean pass, String reason) {}
 
-  record Question(long eventId, String body) {}
-
-  record Answer(String answer) {}
-
   @GetMapping("/events/{id}/posts")
   public List<Map<String, Object>> posts(@PathVariable long id, HttpSession s) {
     auth.approved(s, id);
@@ -205,90 +201,5 @@ public class ContentApi {
       auth.id(s),
       id
     );
-  }
-
-  @GetMapping("/events/{id}/questions")
-  public List<Map<String, Object>> questions(
-    @PathVariable long id,
-    HttpSession s
-  ) {
-    auth.approved(s, id);
-    return store.db.queryForList(
-      "SELECT q.*,u.name,(SELECT COUNT(*) FROM votes v WHERE v.question_id=q.id) votes FROM questions q JOIN users u ON u.id=q.user_id WHERE q.event_id=? AND (q.status='APPROVED' OR q.user_id=?) ORDER BY votes DESC,q.id DESC",
-      id,
-      auth.id(s)
-    );
-  }
-
-  @PostMapping("/questions")
-  public void question(@RequestBody Question q, HttpSession s) {
-    auth.approved(s, q.eventId());
-    Store.word(q.body(), 500, "问题");
-    store.db.update(
-      "INSERT INTO questions(event_id,user_id,body) VALUES(?,?,?)",
-      q.eventId(),
-      auth.id(s),
-      q.body()
-    );
-  }
-
-  @GetMapping("/votes")
-  public List<Long> votes(HttpSession s) {
-    return store.db.queryForList(
-      "SELECT question_id FROM votes WHERE user_id=?",
-      Long.class,
-      auth.id(s)
-    );
-  }
-
-  @PostMapping("/questions/{id}/vote")
-  public void vote(@PathVariable long id, HttpSession s) {
-    Api.check(false, "投票已迁移至管理员发布的会议投票模块");
-  }
-
-  @DeleteMapping("/questions/{id}/vote")
-  public void unvote(@PathVariable long id, HttpSession s) {
-    store.db.update(
-      "DELETE FROM votes WHERE user_id=? AND question_id=?",
-      auth.id(s),
-      id
-    );
-  }
-
-  @GetMapping("/review/questions")
-  public List<Map<String, Object>> reviewQuestions(HttpSession s) {
-    auth.need(s, "review");
-    return store.db.queryForList("SELECT * FROM questions ORDER BY id DESC");
-  }
-
-  @PostMapping("/review/questions/{id}")
-  public void reviewQuestion(
-    @PathVariable long id,
-    @RequestBody Review r,
-    HttpSession s
-  ) {
-    auth.need(s, "review");
-    store.one("SELECT id FROM questions WHERE id=?", id);
-    if (!r.pass()) Store.word(r.reason(), 200, "原因");
-    store.db.update(
-      "UPDATE questions SET status=?,reason=? WHERE id=?",
-      r.pass() ? "APPROVED" : "REJECTED",
-      r.pass() ? "" : r.reason(),
-      id
-    );
-    store.log(auth.id(s), "问题审核", id);
-  }
-
-  @PutMapping("/review/questions/{id}/answer")
-  public void answer(
-    @PathVariable long id,
-    @RequestBody Answer a,
-    HttpSession s
-  ) {
-    auth.need(s, "review");
-    Store.word(a.answer(), 1000, "答复");
-    store.one("SELECT id FROM questions WHERE id=? AND status='APPROVED'", id);
-    store.db.update("UPDATE questions SET answer=? WHERE id=?", a.answer(), id);
-    store.log(auth.id(s), "答复问题", id);
   }
 }

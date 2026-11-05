@@ -16,6 +16,7 @@ import AdminPanel from "./components/AdminPanel.vue";
 import ExhibitorPanel from "./components/ExhibitorPanel.vue";
 import MeetingPanel from "./components/MeetingPanel.vue";
 import FeaturePage from "./components/FeaturePage.vue";
+import AiPage from "./components/AiPage.vue";
 const CheckinPanel = defineAsyncComponent(
   () => import("./components/CheckinPanel.vue"),
 );
@@ -110,6 +111,11 @@ async function login() {
         new URLSearchParams(location.search).has("attendance")
       )
         page.value = "detail";
+      if (
+        user.value.role === "USER" &&
+        new URLSearchParams(location.search).get("page") === "mine"
+      )
+        page.value = "mine";
     }
   });
 }
@@ -143,6 +149,8 @@ onMounted(async () => {
       open(Number(shared.get("event")));
       if (shared.has("attendance")) page.value = "detail";
     }
+    if (user.value.role === "USER" && shared.get("page") === "mine")
+      page.value = "mine";
   } catch {
     page.value = "login";
   } finally {
@@ -242,8 +250,8 @@ onBeforeUnmount(() =>
       ><EventList v-if="page === 'events'" /><EventDetail
         v-else-if="page === 'detail'"
         :key="eventId"
-        :event-id="eventId" /><FeaturePage
-        v-else-if="['topic', 'ai'].includes(page)"
+        :event-id="eventId" /><AiPage v-else-if="page === 'ai'" /><FeaturePage
+        v-else-if="page === 'topic'"
         :key="page"
         :name="page"
     /></template>

@@ -3,18 +3,14 @@
 import { inject, onMounted, ref } from "vue";
 import { api, states, kinds } from "../api";
 import ContentForm from "./ContentForm.vue";
+import QuestionAdmin from "./QuestionAdmin.vue";
 const editing = ref(null);
 const { run, busy, message } = inject("app");
 const posts = ref([]),
-  questions = ref([]),
   reasons = ref({}),
-  answers = ref({}),
   filter = ref("PENDING");
 async function load() {
-  [posts.value, questions.value] = await Promise.all([
-    api("/review/posts"),
-    api("/review/questions"),
-  ]);
+  posts.value = await api("/review/posts");
 }
 async function review(type, row, pass) {
   await run(async () => {
@@ -24,15 +20,6 @@ async function review(type, row, pass) {
     });
     await load();
     message.value = "审核状态已更新";
-  });
-}
-async function answer(row) {
-  await run(async () => {
-    await api(`/review/questions/${row.id}/answer`, "PUT", {
-      answer: answers.value[row.id] || row.answer,
-    });
-    await load();
-    message.value = "主办方答复已发布";
   });
 }
 onMounted(() => run(load));
@@ -66,12 +53,8 @@ onMounted(() => run(load));
           </select></label
         >
       </section>
-      <section
-        v-for="(rows, type) in { posts, questions }"
-        :key="type"
-        class="panel"
-      >
-        <h2>{{ type === "posts" ? "图文与互动内容审核" : "会议提问审核" }}</h2>
+      <section v-for="(rows, type) in { posts }" :key="type" class="panel">
+        <h2>图文与互动内容审核</h2>
         <article
           v-for="row in rows.filter(
             (r) => filter === 'ALL' || r.status === filter,
@@ -116,23 +99,12 @@ onMounted(() => run(load));
               驳回 / 下架
             </button>
           </div>
-          <form
-            v-if="type === 'questions' && row.status === 'APPROVED'"
-            @submit.prevent="answer(row)"
-          >
-            <label
-              >主办方人工答复<textarea
-                v-model="answers[row.id]"
-                :placeholder="row.answer || '请输入答复'"
-                maxlength="1000"
-              ></textarea></label
-            ><button :disabled="busy">发布答复</button>
-          </form>
         </article>
         <p v-if="!rows.some((r) => filter === 'ALL' || r.status === filter)">
           暂无符合条件的内容
         </p>
-      </section></template
-    >
+      </section>
+      <QuestionAdmin :status-filter="filter"
+    /></template>
   </div>
 </template>

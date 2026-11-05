@@ -1,6 +1,7 @@
 package com.zjut.westlakesword;
 
 import jakarta.servlet.http.HttpSession;
+import java.text.Normalizer;
 import java.time.LocalDateTime;
 import java.util.*;
 import org.springframework.transaction.annotation.Transactional;
@@ -94,6 +95,10 @@ public class TalkApi {
       store.count("SELECT COUNT(*) FROM attendance WHERE talk_id=?", id) == 0,
       "该议程已发布签到，不能删除"
     );
+    Api.check(
+      store.count("SELECT COUNT(*) FROM questions WHERE talk_id=?", id) == 0,
+      "该议程已有提问，不能删除"
+    );
     store.db.update("DELETE FROM talks WHERE id=?", id);
     store.log(auth.id(s), "删除议程", id);
   }
@@ -157,44 +162,86 @@ public class TalkApi {
     HttpSession s
   ) {
     auth.approved(s, id);
+    store.one("SELECT id FROM events WHERE id=? AND status='OPEN'", id);
+    long user = auth.id(s);
     var profiles = store.db.queryForList(
       "SELECT tags FROM profiles WHERE user_id=?",
-      auth.id(s)
+      user
     );
-    String interests = profiles.isEmpty()
-      ? ""
-      : (String) profiles.get(0).get("tags");
-    Set<String> tags = new HashSet<>(
-      Arrays.asList(interests.toLowerCase().split("[,，\\s]+"))
+    var interests = tags(
+      profiles.isEmpty() ? null : (String) profiles.get(0).get("tags")
     );
-    tags.remove("");
+    // 与加入日程接口使用相同的时间重叠规则，包括其他会议中的日程。
+    var plans = store.db.queryForList(
+      "SELECT t.id,t.event_id,t.title,t.room,t.starts,t.ends,e.title event_title FROM plans p JOIN talks t ON t.id=p.talk_id JOIN events e ON e.id=t.event_id WHERE p.user_id=? ORDER BY t.starts,t.id",
+      user
+    );
     var list = store.db.queryForList(
-      "SELECT t.*,(SELECT COUNT(*) FROM plans p WHERE p.talk_id=t.id) popularity FROM talks t WHERE event_id=? AND ends>NOW()",
-      id
+      "SELECT t.id,t.event_id,t.title,t.speaker,t.room,t.starts,t.ends,t.tags,(SELECT COUNT(*) FROM plans p WHERE p.talk_id=t.id) popularity FROM talks t WHERE t.event_id=? AND t.ends>NOW() AND NOT EXISTS (SELECT 1 FROM plans p WHERE p.talk_id=t.id AND p.user_id=?)",
+      id,
+      user
     );
     for (var t : list) {
-      long score = tags
+      var talkTags = tags((String) t.get("tags")).keySet();
+      var matched = interests
+        .entrySet()
         .stream()
-        .filter(tag -> ((String) t.get("tags")).toLowerCase().contains(tag))
-        .count();
-      t.put("score", score);
+        .filter(tag -> talkTags.contains(tag.getKey()))
+        .map(Map.Entry::getValue)
+        .toList();
+      LocalDateTime starts = (LocalDateTime) t.get("starts");
+      LocalDateTime ends = (LocalDateTime) t.get("ends");
+      var conflicts = plans
+        .stream()
+        .filter(
+          p ->
+            ((LocalDateTime) p.get("starts")).isBefore(ends) &&
+            ((LocalDateTime) p.get("ends")).isAfter(starts)
+        )
+        .toList();
+      long popularity = Store.num(t, "popularity");
+      t.put("score", matched.size());
+      t.put("matched_tags", matched);
+      t.put("conflicts", conflicts);
       t.put(
         "reason",
-        score > 0 ? "匹配你的兴趣标签" : "按真实日程收藏人数推荐"
+        !matched.isEmpty()
+          ? "匹配你的兴趣：" + String.join("、", matched)
+          : popularity > 0
+            ? "按收藏热度推荐，已有 " + popularity + " 人加入日程"
+            : "暂无收藏记录，按议程开始时间推荐"
       );
     }
+    // 先满足可参加的时间，再比较兴趣、实际收藏人数；相同分数时顺序稳定。
     list.sort(
-      Comparator.<Map<String, Object>>comparingLong(t ->
-        ((Number) t.get("score")).longValue()
+      Comparator.<Map<String, Object>>comparingInt(t ->
+        ((List<?>) t.get("conflicts")).isEmpty() ? 0 : 1
       )
-        .reversed()
         .thenComparing(
           Comparator.comparingLong((Map<String, Object> t) ->
-            ((Number) t.get("popularity")).longValue()
+            Store.num(t, "score")
           ).reversed()
         )
+        .thenComparing(
+          Comparator.comparingLong((Map<String, Object> t) ->
+            Store.num(t, "popularity")
+          ).reversed()
+        )
+        .thenComparing(t -> (LocalDateTime) t.get("starts"))
+        .thenComparingLong(t -> Store.num(t, "id"))
     );
-    return list;
+    return list.stream().limit(6).toList();
+  }
+
+  private static Map<String, String> tags(String value) {
+    Map<String, String> result = new LinkedHashMap<>();
+    if (value == null) return result;
+    for (String tag : Normalizer.normalize(value, Normalizer.Form.NFKC).split(
+      "[,，;；、\\s\\p{Z}]+"
+    )) {
+      if (!tag.isBlank()) result.putIfAbsent(tag.toLowerCase(Locale.ROOT), tag);
+    }
+    return result;
   }
 
   /** 仅返回模块契约，不伪造 AI、地图或话题业务结果。 */
@@ -206,6 +253,14 @@ public class TalkApi {
   ) {
     auth.approved(s, id);
     Api.check(Set.of("map", "ai", "topic").contains(name), "模块不存在");
+    if ("ai".equals(name)) return Map.of(
+      "name",
+      name,
+      "enabled",
+      true,
+      "message",
+      "AI 会议问答已启用，模型不可用时提供资料检索结果"
+    );
     return Map.of(
       "name",
       name,

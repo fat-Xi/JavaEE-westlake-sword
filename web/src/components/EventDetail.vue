@@ -6,22 +6,21 @@ import CommunityPage from "./CommunityPage.vue";
 import TicketPage from "./TicketPage.vue";
 import PollPanel from "./PollPanel.vue";
 import MediaPlayer from "./MediaPlayer.vue";
+import RecommendationPanel from "./RecommendationPanel.vue";
+import QuestionBox from "./QuestionBox.vue";
 const props = defineProps({ eventId: Number });
-const { run, busy, message, page } = inject("app");
+const { run, busy, message } = inject("app");
 const event = ref(null),
   join = ref(null),
   talks = ref([]),
   posts = ref([]),
   files = ref([]),
   media = ref([]),
-  questions = ref([]),
-  recommendations = ref([]),
-  votes = ref([]),
+  planRevision = ref(0),
   likes = ref([]);
 const subscribed = ref(false),
   tab = ref("intro"),
   filter = ref("EXHIBIT"),
-  question = ref(""),
   mapId = ref(0),
   now = ref(Date.now());
 const approved = computed(() => join.value?.status === "APPROVED");
@@ -40,29 +39,16 @@ async function load() {
   subscribed.value = (await api("/subs")).includes(props.eventId);
   talks.value = await api(`/events/${props.eventId}/talks`);
   if (approved.value) {
-    [
-      posts.value,
-      files.value,
-      media.value,
-      questions.value,
-      recommendations.value,
-      votes.value,
-      likes.value,
-    ] = await Promise.all([
+    [posts.value, files.value, media.value, likes.value] = await Promise.all([
       api(`/events/${props.eventId}/posts`),
       api(`/events/${props.eventId}/files`),
       api(`/events/${props.eventId}/media`),
-      api(`/events/${props.eventId}/questions`),
-      api(`/events/${props.eventId}/recommend`),
-      api("/votes"),
       api("/likes"),
     ]);
   } else {
     posts.value = [];
     files.value = [];
     media.value = [];
-    questions.value = [];
-    recommendations.value = [];
     tab.value = "intro";
   }
 }
@@ -70,6 +56,7 @@ async function act(path, method = "POST", data) {
   await run(async () => {
     await api(path, method, data);
     await load();
+    if (/^\/talks\/\d+\/plan$/.test(path)) planRevision.value++;
     message.value = "操作成功";
   });
 }
@@ -92,13 +79,26 @@ let ticks = 0;
 onMounted(() =>
   run(async () => {
     await load();
-    if (new URLSearchParams(location.search).get("talk") && approved.value)
-      tab.value = "talks";
+    const shared = new URLSearchParams(location.search);
+    const requestedTab = shared.get("tab");
     if (
-      new URLSearchParams(location.search).has("attendance") &&
-      approved.value
+      approved.value &&
+      [
+        "intro",
+        "talks",
+        "content",
+        "questions",
+        "polls",
+        "comments",
+        "wall",
+        "attendance",
+      ].includes(requestedTab)
     )
-      tab.value = "attendance";
+      tab.value = requestedTab;
+    else if (shared.get("talk") && approved.value) tab.value = "talks";
+    if (["EXHIBIT", "RESULT", "NEWS"].includes(shared.get("kind")))
+      filter.value = shared.get("kind");
+    if (shared.has("attendance") && approved.value) tab.value = "attendance";
     timer = setInterval(() => {
       now.value = Date.now();
       // 定期更新直播开关与回放地址，不要求观众手动刷新。
@@ -251,19 +251,11 @@ onBeforeUnmount(() => clearInterval(timer));
           :aria-label="talk.title + '地图导航预留区域'"
         ></div>
       </article>
-      <div class="section-block">
-        <h2>为你推荐</h2>
-        <div v-for="row in recommendations" :key="row.id" class="row">
-          <div>
-            {{ row.title }}
-            <p class="muted">{{ row.reason }}</p>
-          </div>
-          <button @click="act(`/talks/${row.id}/plan`)">加入日程</button>
-        </div>
-        <p>个人日程和冲突管理请前往个人主页。</p>
-        <button @click="page = 'mine'">前往个人主页</button>
-      </div></template
-    >
+      <RecommendationPanel
+        :event-id="eventId"
+        :refresh-key="planRevision"
+        @add="act(`/talks/${$event}/plan`)"
+    /></template>
     <template v-if="tab === 'content' && approved"
       ><nav class="tabs">
         <button
@@ -278,6 +270,7 @@ onBeforeUnmount(() => clearInterval(timer));
       <article
         v-for="post in posts.filter((p) => p.kind === filter)"
         :key="post.id"
+        :id="'post-' + post.id"
         class="section-block"
       >
         <img
@@ -307,27 +300,12 @@ onBeforeUnmount(() => clearInterval(timer));
         暂无内容
       </p></template
     >
-    <template v-if="tab === 'questions' && approved"
-      ><h2>会议提问</h2>
-      <form
-        @submit.prevent="act('/questions', 'POST', { eventId, body: question })"
-      >
-        <label
-          >问题<textarea
-            v-model="question"
-            required
-            maxlength="500"
-          ></textarea></label
-        ><button :disabled="busy">提交问题审核</button>
-      </form>
-      <article v-for="q in questions" :key="q.id" class="row">
-        <div>
-          <h3>{{ q.body }}</h3>
-          <p>{{ states[q.status] }} {{ q.reason }}</p>
-          <p v-if="q.answer">主办方答复：{{ q.answer }}</p>
-        </div>
-      </article></template
-    >
+    <QuestionBox
+      v-if="tab === 'questions' && approved"
+      :event-id="eventId"
+      :talks="talks"
+      :event-ended="stage(event) === '已结束'"
+    />
     <PollPanel v-if="tab === 'polls' && approved" :event-id="eventId" />
     <CommunityPage
       v-if="tab === 'comments' && approved"

@@ -40,6 +40,16 @@ public class Upgrade implements CommandLineRunner {
     column("talks", "replay_url", "VARCHAR(500) NOT NULL DEFAULT ''");
     column("talks", "live_on", "BOOLEAN NOT NULL DEFAULT FALSE");
     column("talks", "had_live", "BOOLEAN NOT NULL DEFAULT FALSE");
+    column("questions", "talk_id", "BIGINT NULL");
+    column("questions", "featured", "BOOLEAN NOT NULL DEFAULT FALSE");
+    column("questions", "closed", "BOOLEAN NOT NULL DEFAULT FALSE");
+    if (
+      store.count(
+        "SELECT COUNT(*) FROM information_schema.table_constraints WHERE constraint_schema=DATABASE() AND table_name='questions' AND constraint_name='fk_questions_talk'"
+      ) == 0
+    ) store.db.execute(
+      "ALTER TABLE questions ADD CONSTRAINT fk_questions_talk FOREIGN KEY(talk_id) REFERENCES talks(id)"
+    );
     column("files", "data", "LONGBLOB");
     column("request_files", "data", "LONGBLOB");
     column("requests", "news", "TEXT");

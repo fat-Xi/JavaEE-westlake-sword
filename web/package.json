@@ -13,7 +13,10 @@
     "test:edges": "node tests/v4-edges.mjs",
     "test:files": "node tests/v5-files.mjs",
     "test:scan": "node tests/v6.mjs",
-    "test:community": "node tests/community.mjs"
+    "test:community": "node tests/community.mjs",
+    "test:recommend": "node tests/recommendations.mjs",
+    "test:questions": "node tests/questions.mjs",
+    "test:ai": "node tests/ai.mjs"
   },
   "dependencies": {
     "echarts": "^6.1.0",
