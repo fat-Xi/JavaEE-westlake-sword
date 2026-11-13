@@ -3,6 +3,7 @@
 import { computed, inject, ref, defineAsyncComponent } from "vue";
 import EventAdmin from "./EventAdmin.vue";
 import ReviewPanel from "./ReviewPanel.vue";
+import ExhibitReview from "./ExhibitReview.vue";
 import RequestPanel from "./RequestPanel.vue";
 const AttendanceAdmin = defineAsyncComponent(
   () => import("./AttendanceAdmin.vue"),
@@ -13,6 +14,12 @@ import AccessPanel from "./AccessPanel.vue";
 const { can, user } = inject("app");
 const tabs = computed(() =>
   [
+    {
+      id: "exhibitReview",
+      label: "展商会议与互动审核",
+      show: true,
+      view: ExhibitReview,
+    },
     { id: "requests", label: "办会申请审核", show: true, view: RequestPanel },
     {
       id: "events",

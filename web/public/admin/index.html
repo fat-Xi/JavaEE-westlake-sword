@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="UTF-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>会享 · 管理工作台</title
+  ><link rel="stylesheet" href="style.css" />
+  <body>
+    <header>
+      <a class="brand" href="#" onclick="go('accounts')"
+        ><img src="/logo.png" />会享 <small>管理工作台</small></a
+      ><button class="logout" onclick="signOut()">退出</button>
+    </header>
+    <nav id="nav"></nav>
+    <main id="app"></main>
+    <dialog id="modal"><div id="dialog"></div></dialog>
+    <div id="toast" role="status"></div>
+    <script src="app.js"></script>
+    <script src="live.js"></script>
+  </body>
+</html>

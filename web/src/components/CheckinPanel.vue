@@ -1,11 +1,12 @@
 <script setup>
 // 个人票据证明参会身份；工作人员选择的场次决定签到记在哪个议程。
-import { computed, inject, onMounted, onBeforeUnmount, ref } from "vue";
+import { computed, inject, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { Html5Qrcode } from "html5-qrcode";
 import { api, time } from "../api";
 const { run, busy } = inject("app");
 const events = ref([]),
-  eventId = ref(0),
+  eligible = ref(0),
+  loading = ref(true),
   token = ref(""),
   rows = ref([]);
 const scanning = ref(false),
@@ -16,6 +17,14 @@ const cameras = ref([]),
   cameraId = ref(""),
   error = ref(""),
   result = ref(null);
+const available = computed(() =>
+  sessions.value.filter(
+    (row) =>
+      row.enabled &&
+      new Date(row.starts).getTime() <= clock.value &&
+      clock.value < new Date(row.ends).getTime(),
+  ),
+);
 const current = computed(() =>
   sessions.value.find((row) => row.id === sessionId.value),
 );
@@ -38,20 +47,41 @@ function state(row) {
     ? "签到已结束"
     : "正在签到";
 }
+let requestId = 0;
 async function load() {
-  sessions.value = eventId.value
-    ? await api("/attendance?eventId=" + eventId.value)
-    : [];
-  if (!sessions.value.some((row) => row.id === sessionId.value)) {
-    sessionId.value =
-      (
-        sessions.value.find((row) => state(row) === "正在签到") ||
-        sessions.value[0]
-      )?.id || 0;
+  const id = ++requestId;
+  try {
+    events.value = await api("/events");
+    const all = await Promise.all(
+      events.value
+        .filter((e) => e.status === "OPEN")
+        .map(async (e) =>
+          (await api("/attendance?eventId=" + e.id)).map((row) => ({
+            ...row,
+            meeting: e.title,
+          })),
+        ),
+    );
+    if (disposed || id !== requestId) return;
+    sessions.value = all.flat();
+    clock.value = Date.now();
+    if (!available.value.some((row) => row.id === sessionId.value))
+      sessionId.value = available.value[0]?.id || 0;
+    await loadResults();
+  } finally {
+    loading.value = false;
   }
-  rows.value = sessionId.value
-    ? (await api("/attendance/" + sessionId.value + "/results")).rows
-    : [];
+}
+async function loadResults() {
+  const selected = sessionId.value;
+  rows.value = [];
+  eligible.value = 0;
+  if (!selected) return;
+  const data = await api("/attendance/" + selected + "/results");
+  if (!disposed && selected === sessionId.value) {
+    rows.value = data.rows;
+    eligible.value = data.eligible;
+  }
 }
 async function stop() {
   if (reader?.isScanning) await reader.stop();
@@ -63,7 +93,7 @@ async function change() {
     token.value = "";
     result.value = null;
     error.value = "";
-    await load();
+    await loadResults();
   });
 }
 function ticket(text) {
@@ -201,24 +231,32 @@ async function image(event) {
     }
   });
 }
-onMounted(() =>
-  run(async () => {
-    events.value = await api("/events");
-    // 默认定位到有正在签到场次的会议，避免选到尚未开始且无签到的会议。
-    const all = await Promise.all(
-      events.value.map((e) => api("/attendance?eventId=" + e.id)),
-    );
-    const index = all.findIndex((list) =>
-      list.some((row) => state(row) === "正在签到"),
-    );
-    eventId.value = events.value[index >= 0 ? index : 0]?.id || 0;
-    await load();
-    if (!disposed)
-      timer = setInterval(() => {
-        clock.value = Date.now();
-      }, 1000);
-  }),
-);
+watch(available, async (list) => {
+  if (list.some((row) => row.id === sessionId.value)) return;
+  await stop().catch(() => {});
+  sessionId.value = list[0]?.id || 0;
+  result.value = null;
+  token.value = "";
+  await run(loadResults);
+});
+onMounted(async () => {
+  await run(load);
+  if (!disposed)
+    timer = setInterval(() => {
+      clock.value = Date.now();
+      // 自动发现新发布或已关闭的签到场次，操作期间不刷新。
+      if (
+        !busy.value &&
+        !scanning.value &&
+        !starting.value &&
+        clock.value - lastRefresh > 15000
+      ) {
+        lastRefresh = clock.value;
+        run(load);
+      }
+    }, 1000);
+});
+let lastRefresh = Date.now();
 onBeforeUnmount(() => {
   disposed = true;
   clearInterval(timer);
@@ -229,106 +267,221 @@ onBeforeUnmount(() => {
 });
 </script>
 <template>
-  <div class="panel function-shell">
-    <section class="panel">
-      <h2>二维码核销</h2>
-      <p>
-        先确认本签到台负责的会议和场次，再扫描参会者的个人签到码。签到只记入所选场次，不会自动签到其他议程。
-      </p>
-      <div class="form-grid">
+  <div class="staff-desk">
+    <div class="staff-heading">
+      <span class="eyebrow">HUIXIANG · CHECK IN</span>
+      <h1>让每一次到场，都有记录。</h1>
+      <p class="muted">选择正在开放签到的议程，核验参会者个人签到码。</p>
+    </div>
+    <section v-if="loading" class="panel empty">正在加载签到活动…</section>
+    <section v-else-if="!available.length" class="panel staff-empty">
+      <h2>暂无可签到的议程</h2>
+      <p>目前没有开放中的签到活动，新的签到活动发布后会自动显示。</p>
+      <button :disabled="busy" @click="run(load)">刷新活动</button>
+    </section>
+    <template v-else>
+      <section class="panel">
+        <div class="row">
+          <h2>选择签到议程</h2>
+          <button :disabled="busy || scanning || starting" @click="run(load)">
+            刷新活动
+          </button>
+        </div>
         <label
-          >签到会议<select
-            v-model="eventId"
-            :disabled="busy || scanning || starting"
-            @change="change"
-          >
-            <option v-for="event in events" :key="event.id" :value="event.id">
-              {{ event.title }}
-            </option>
-          </select></label
-        >
-        <label
-          >核销场次（本签到台负责的议程）<select
+          >需要签到的议程<select
             v-model="sessionId"
             :disabled="busy || scanning || starting"
             @change="change"
           >
-            <option v-for="row in sessions" :key="row.id" :value="row.id">
-              {{ row.title }} · {{ state(row) }}
+            <option v-for="row in available" :key="row.id" :value="row.id">
+              {{ row.meeting }} · {{ row.title }}
             </option>
           </select></label
         >
-      </div>
-      <div v-if="current" class="schedule-hint">
-        <strong>{{ current.title }}</strong
-        ><span class="tag">{{ state(current) }}</span>
-        <p>签到窗口：{{ time(current.starts) }} — {{ time(current.ends) }}</p>
-        <p>
-          议程：{{ time(current.talk_starts) }} —
-          {{ time(current.talk_ends) }} · {{ current.room }}
+        <div v-if="current" class="staff-schedule">
+          <span class="tag">正在签到</span>
+          <h3>{{ current.title }}</h3>
+          <p>{{ current.meeting }} · {{ current.room }}</p>
+          <p>签到时间：{{ time(current.starts) }} — {{ time(current.ends) }}</p>
+          <p class="muted">
+            议程时间：{{ time(current.talk_starts) }} —
+            {{ time(current.talk_ends) }}
+          </p>
+        </div>
+        <div class="staff-metrics">
+          <div>
+            <span>已签到人数</span><strong>{{ rows.length }}</strong>
+          </div>
+          <div>
+            <span>可参会人数</span><strong>{{ eligible }}</strong>
+          </div>
+          <div>
+            <span>未签到人数</span
+            ><strong>{{ Math.max(0, eligible - rows.length) }}</strong>
+          </div>
+        </div>
+        <p class="muted">
+          可参会人数按本会议身份和报名均已通过的参会者统计，签到只计入当前议程。
         </p>
-      </div>
-      <p v-else class="notice">
-        这场会议尚未发布签到，请切换会议或联系管理员发布。
-      </p>
-      <p class="muted">
-        管理员发布的二维码是会议签到入口；核销时请扫描参会者在“会议 →
-        签到服务”里出示的个人签到码。
-      </p>
-      <p v-if="error" class="notice scan-error" role="alert">{{ error }}</p>
-      <div v-if="result" class="status-ok" role="status">
-        <strong>{{ result.name }} · {{ result.message }}</strong>
-        <p>核销场次：{{ result.title }}</p>
-      </div>
-      <label v-if="cameras.length > 1"
-        >使用摄像头<select
-          v-model="cameraId"
-          :disabled="scanning || starting || busy"
+      </section>
+      <section class="panel">
+        <h2>核验参会身份</h2>
+        <p class="muted">
+          请扫描参会者个人签到码，会议入口二维码不能用于核销。
+        </p>
+        <p v-if="error" class="notice scan-error" role="alert">{{ error }}</p>
+        <div v-if="result" class="status-ok" role="status">
+          <strong>{{ result.name }} · {{ result.message }}</strong>
+          <p>签到议程：{{ result.title }}</p>
+        </div>
+        <label v-if="cameras.length > 1"
+          >使用摄像头<select
+            v-model="cameraId"
+            :disabled="scanning || starting || busy"
+          >
+            <option v-for="item in cameras" :key="item.id" :value="item.id">
+              {{ item.label || "摄像头" }}
+            </option>
+          </select></label
         >
-          <option v-for="item in cameras" :key="item.id" :value="item.id">
-            {{ item.label || "摄像头" }}
-          </option>
-        </select></label
-      >
-      <div class="actions">
-        <button v-if="!scanning" :disabled="busy || !canScan" @click="camera">
-          {{ starting ? "正在打开摄像头…" : "开启摄像头扫码" }}</button
-        ><button v-else @click="run(stop)">停止扫码</button>
-      </div>
-      <div id="qr-reader" class="scan-reader"></div>
-      <label
-        >识别个人签到码图片<input
-          type="file"
-          accept="image/png,image/jpeg,image/webp"
-          :disabled="busy || !canScan"
-          @change="image"
-      /></label>
-      <p class="muted">
-        可读取参会者下载的个人签到码或清晰截图，识别后按当前场次核销；图片仅在本机识别，不上传服务器。
-      </p>
-      <form @submit.prevent="scan">
+        <div class="actions">
+          <button
+            v-if="!scanning"
+            class="primary"
+            :disabled="busy || !canScan"
+            @click="camera"
+          >
+            {{ starting ? "正在打开摄像头…" : "开启摄像头扫码" }}</button
+          ><button v-else @click="run(stop)">停止扫码</button>
+        </div>
+        <div id="qr-reader" class="scan-reader"></div>
         <label
-          >备用方式：粘贴参会者票据<input
-            v-model="token"
-            required
-            maxlength="500"
-            placeholder="个人签到码下方的备用票据"
-            :disabled="scanning || starting" /></label
-        ><button class="primary" :disabled="busy || !canScan || scanning">
-          核验并签到
-        </button>
-      </form>
-    </section>
-    <section class="panel">
-      <div class="row">
-        <h2>已签到名单 · {{ rows.length }} 人</h2>
-        <button :disabled="busy" @click="run(load)">刷新名单</button>
-      </div>
-      <div v-for="row in rows" :key="row.name" class="row">
-        <strong>{{ row.nick }} · {{ row.real_name }}（{{ row.name }}）</strong
-        ><span>{{ time(row.checked) }}</span>
-      </div>
-      <p v-if="!rows.length" class="muted">当前场次暂无签到记录。</p>
-    </section>
+          >识别个人签到码图片<input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            :disabled="busy || !canScan"
+            @change="image"
+        /></label>
+        <p class="muted">图片仅在本机识别，不上传服务器。</p>
+        <form @submit.prevent="scan">
+          <label
+            >手动输入签到票据<input
+              v-model="token"
+              required
+              maxlength="64"
+              placeholder="输入参会者个人签到码下方的备用票据"
+              :disabled="scanning || starting || busy" /></label
+          ><button class="primary" :disabled="busy || !canScan || scanning">
+            核验并签到
+          </button>
+        </form>
+      </section>
+      <section class="panel">
+        <div class="row">
+          <h2>签到记录 · {{ rows.length }} 人</h2>
+          <button :disabled="busy" @click="run(loadResults)">刷新记录</button>
+        </div>
+        <div class="table-wrap">
+          <table v-if="rows.length">
+            <thead>
+              <tr>
+                <th>参会者</th>
+                <th>姓名</th>
+                <th>签到时间</th>
+                <th>核销人员</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in rows" :key="row.name">
+                <td>{{ row.nick }}</td>
+                <td>{{ row.real_name || "未填写" }}</td>
+                <td>{{ time(row.checked) }}</td>
+                <td>{{ row.staff }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="empty">当前议程暂无签到记录。</p>
+        </div>
+      </section>
+    </template>
   </div>
 </template>
+<style>
+.staff-app > header {
+  grid-template-columns: 200px 1fr auto;
+}
+.staff-app > header .account {
+  justify-content: flex-end;
+}
+.staff-app main {
+  max-width: 1240px;
+}
+.staff-heading {
+  margin: 20px 0 36px;
+}
+.staff-heading h1 {
+  font-size: clamp(28px, 3vw, 42px);
+  margin: 14px 0;
+}
+.staff-desk .panel {
+  padding: 30px;
+  margin-bottom: 24px;
+  border: 1px solid #dce2f2;
+  border-radius: 24px;
+  background: #fff;
+}
+.staff-empty {
+  text-align: center;
+  padding: 70px 30px !important;
+}
+.staff-schedule {
+  margin: 24px 0;
+  padding: 22px;
+  background: #f4f3fc;
+  border-radius: 16px;
+}
+.staff-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+.staff-metrics > div {
+  border: 1px solid #e2e5f3;
+  border-radius: 16px;
+  padding: 22px;
+}
+.staff-metrics span {
+  color: #7b8ba3;
+}
+.staff-metrics strong {
+  display: block;
+  color: #7154e8;
+  font-size: 34px;
+  margin-top: 12px;
+}
+.staff-desk select,
+.staff-desk input {
+  width: 100%;
+}
+.staff-desk form {
+  margin-top: 24px;
+}
+.staff-desk .scan-reader:empty {
+  min-height: 0;
+}
+@media (max-width: 700px) {
+  .staff-app > header {
+    display: flex;
+    flex-wrap: wrap;
+  }
+  .staff-desk .panel {
+    padding: 20px;
+  }
+  .staff-metrics {
+    gap: 8px;
+  }
+  .staff-metrics > div {
+    padding: 12px;
+  }
+}
+</style>

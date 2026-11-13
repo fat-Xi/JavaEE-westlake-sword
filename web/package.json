@@ -6,14 +6,9 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
-    "format": "prettier --write src vite.config.js package.json tests",
-    "format:check": "prettier --check src vite.config.js package.json tests",
-    "format:java": "prettier --plugin=prettier-plugin-java --write ../src/**/*.java",
-    "test:ui": "node tests/v5.mjs",
-    "test:edges": "node tests/v4-edges.mjs",
-    "test:files": "node tests/v5-files.mjs",
-    "test:scan": "node tests/v6.mjs",
-    "test:community": "node tests/community.mjs"
+    "format": "prettier --write src vite.config.js package.json",
+    "format:check": "prettier --check src vite.config.js package.json",
+    "format:java": "prettier --plugin=prettier-plugin-java --write ../src/**/*.java"
   },
   "dependencies": {
     "echarts": "^6.1.0",

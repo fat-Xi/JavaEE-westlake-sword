@@ -20,6 +20,7 @@ const blank = () => ({
   starts: "",
   ends: "",
   capacity: 100,
+  poll_title: "",
   news: "",
   result: "",
   exhibit: "",
@@ -233,6 +234,11 @@ onMounted(() => run(load));
           以下内容随本申请审核。管理员建会后自动发布，作者仍为提交展商。
         </p>
         <label
+          >投票大标题（选填）<input
+            v-model="form.poll_title"
+            maxlength="120"
+            placeholder="例如：下一场分享，你想听什么？" /></label
+        ><label
           >会议资讯<textarea v-model="form.news" maxlength="10000"></textarea>
         </label>
         <label
@@ -305,6 +311,7 @@ onMounted(() => run(load));
       />
       <div
         v-for="[key, label] in [
+          ['poll_title', '投票大标题'],
           ['news', '会议资讯'],
           ['result', '成果介绍'],
           ['exhibit', '展商资料'],

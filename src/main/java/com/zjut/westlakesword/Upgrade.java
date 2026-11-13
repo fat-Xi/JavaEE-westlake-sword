@@ -30,6 +30,17 @@ public class Upgrade implements CommandLineRunner {
   }
 
   public void run(String... args) {
+    column("polls", "heading", "VARCHAR(120) NOT NULL DEFAULT ''");
+    column("events", "cover", "MEDIUMTEXT");
+    column("events", "poster", "MEDIUMTEXT");
+    column("events", "posters", "LONGTEXT");
+    column("events", "cover_title", "VARCHAR(120) NOT NULL DEFAULT ''");
+    column("events", "meeting_type", "VARCHAR(30) NOT NULL DEFAULT ''");
+    column("events", "features", "TEXT");
+    column("requests", "poll_title", "VARCHAR(120) NOT NULL DEFAULT ''");
+    column("questions", "talk_id", "BIGINT NULL");
+    column("posts", "anonymous", "BOOLEAN NOT NULL DEFAULT FALSE");
+    column("posts", "font", "VARCHAR(20) NOT NULL DEFAULT 'sans'");
     column("users", "status", "VARCHAR(20) NOT NULL DEFAULT 'APPROVED'");
     column("users", "reason", "VARCHAR(200) NOT NULL DEFAULT ''");
     column("profiles", "real_name", "VARCHAR(40) NOT NULL DEFAULT ''");

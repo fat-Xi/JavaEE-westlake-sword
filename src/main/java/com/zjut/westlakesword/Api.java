@@ -25,6 +25,20 @@ public class Api {
     this.joins = joins;
   }
 
+  @GetMapping("/events/summary")
+  public Map<String, Object> summary() {
+    return Map.of(
+      "talks",
+      store.count(
+        "SELECT COUNT(*) FROM talks t JOIN events e ON e.id=t.event_id WHERE e.status='OPEN'"
+      ),
+      "speakers",
+      store.count(
+        "SELECT COUNT(DISTINCT t.speaker) FROM talks t JOIN events e ON e.id=t.event_id WHERE e.status='OPEN'"
+      )
+    );
+  }
+
   record Login(String name, String password) {}
 
   record Profile(
@@ -196,6 +210,7 @@ public class Api {
         "账号或密码错误"
       );
     }
+    Api.check(!"DELETED".equals(rows.get(0).get("status")), "账户已删除");
     long id = Store.num(rows.get(0), "id");
     request.getSession().invalidate();
     HttpSession session = request.getSession(true);

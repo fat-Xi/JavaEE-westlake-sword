@@ -29,7 +29,9 @@ public class TalkApi {
   ) {}
 
   @GetMapping("/events/{id}/talks")
-  public List<Map<String, Object>> talks(@PathVariable long id) {
+  public List<Map<String, Object>> talks(@PathVariable long id, HttpSession s) {
+    if ("ADMIN".equals(auth.role(s))) auth.admin(s);
+    else auth.approved(s, id);
     store.one("SELECT id FROM events WHERE id=? AND status='OPEN'", id);
     return store.db.queryForList(
       "SELECT id,event_id,title,speaker,room,starts,ends,tags FROM talks WHERE event_id=? ORDER BY starts",

@@ -108,6 +108,29 @@ public class ServiceApi {
       f.talkId()
     );
     Api.check(
+      !java.time.LocalDateTime.now().isBefore(
+        (java.time.LocalDateTime) talk.get("starts")
+      ) &&
+        java.time.LocalDateTime.now().isBefore(
+          (java.time.LocalDateTime) talk.get("ends")
+        ),
+      "只能发布正在进行的议程签到"
+    );
+    Api.check(
+      store.count(
+        "SELECT COUNT(*) FROM attendance WHERE talk_id=?",
+        f.talkId()
+      ) == 0,
+      "此议程已发布签到"
+    );
+    Api.check(
+      store.count(
+        "SELECT COUNT(*) FROM exhibit_reviews WHERE kind='CHECK' AND status='PENDING' AND JSON_EXTRACT(payload,'$.talkId')=?",
+        f.talkId()
+      ) == 0,
+      "展商已提交此议程的签到申请，请先处理该申请"
+    );
+    Api.check(
       f.starts() != null && f.ends() != null && f.ends().isAfter(f.starts()),
       "签到结束时间必须晚于开始时间"
     );

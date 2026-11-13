@@ -1,11 +1,12 @@
 // 统一请求入口。Session Cookie 由浏览器管理，写请求携带防跨站请求头。
-export async function api(path, method = "GET", data) {
+export async function api(path, method = "GET", data, options = {}) {
   const isFile = data instanceof FormData;
   const headers = { "X-App-Request": "1" };
   if (!isFile) headers["Content-Type"] = "application/json";
   const response = await fetch("/api" + path, {
     method,
     credentials: "same-origin",
+    signal: options.signal,
     headers,
     body: data === undefined ? undefined : isFile ? data : JSON.stringify(data),
   });
@@ -46,3 +47,19 @@ export const kinds = {
 };
 export const time = (value) =>
   value ? String(value).replace("T", " ").slice(0, 16) : "—";
+
+// 数据库 TIMESTAMP 返回 UTC；发表时间与议程的本地日期时间分开格式化。
+export function postedTime(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(date);
+}

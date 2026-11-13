@@ -52,7 +52,8 @@ public class WebConfig implements WebMvcConfigurer {
                 "/api/profile",
                 "/api/password",
                 "/api/notes",
-                "/api/notes/read"
+                "/api/notes/read",
+                "/api/visits"
               ).contains(uri)
             ) {
               auth.active(req.getSession());
@@ -75,6 +76,7 @@ public class WebConfig implements WebMvcConfigurer {
               }
               if ("EXHIBITOR".equals(role)) {
                 boolean allowed =
+                  uri.startsWith("/api/exhibitor/") ||
                   uri.startsWith("/api/requests") ||
                   (read &&
                     (uri.equals("/api/events") ||

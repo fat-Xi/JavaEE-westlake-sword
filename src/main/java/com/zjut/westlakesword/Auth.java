@@ -17,11 +17,26 @@ public class Auth {
   }
 
   public long id(HttpSession session) {
-    Object id = session.getAttribute("uid");
+    Object id;
+    // AI 长请求期间可能退出登录，失效会话统一返回 401。
+    try {
+      id = session.getAttribute("uid");
+    } catch (IllegalStateException e) {
+      id = null;
+    }
     if (id == null) throw new ResponseStatusException(
       HttpStatus.UNAUTHORIZED,
       "请先登录"
     );
+    if (
+      store.count(
+        "SELECT COUNT(*) FROM users WHERE id=? AND status='DELETED'",
+        id
+      ) > 0
+    ) {
+      session.invalidate();
+      throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "账户已删除");
+    }
     return (Long) id;
   }
 

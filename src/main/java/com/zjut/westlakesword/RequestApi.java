@@ -45,7 +45,8 @@ public class RequestApi {
     String news,
     String result,
     String exhibit,
-    String image
+    String image,
+    String poll_title
   ) {}
 
   record Review(boolean pass, String reason) {}
@@ -66,6 +67,7 @@ public class RequestApi {
       text(f.exhibit())
     ))
       Api.check(text.length() <= 10000, "每类资料最多10000字");
+    Api.check(text(f.poll_title()).length() <= 120, "投票标题最多120字");
     Store.image(f.image());
   }
 
@@ -75,16 +77,24 @@ public class RequestApi {
 
   private void materials(long id, Form f) {
     store.db.update(
-      "UPDATE requests SET news=?,result=?,exhibit=?,image=? WHERE id=?",
+      "UPDATE requests SET news=?,result=?,exhibit=?,image=?,poll_title=? WHERE id=?",
       text(f.news()),
       text(f.result()),
       text(f.exhibit()),
       Store.image(f.image()),
+      text(f.poll_title()),
       id
     );
   }
 
   Map<String, Object> readable(long id, HttpSession s, boolean lock) {
+    if (lock) Api.check(
+      store.count(
+        "SELECT COUNT(*) FROM app_meta WHERE name=?",
+        "exhibit-import-" + id
+      ) == 0,
+      "此申请已迁移，请在展商会议审核中处理"
+    );
     var r = store.one(
       "SELECT * FROM requests WHERE id=?" + (lock ? " FOR UPDATE" : ""),
       id
@@ -114,7 +124,7 @@ public class RequestApi {
   @GetMapping
   public List<Map<String, Object>> list(HttpSession s) {
     if ("ADMIN".equals(auth.role(s))) return store.db.queryForList(
-      "SELECT r.*,u.name FROM requests r JOIN users u ON u.id=r.user_id ORDER BY r.id DESC"
+      "SELECT r.*,u.name FROM requests r JOIN users u ON u.id=r.user_id WHERE NOT EXISTS (SELECT 1 FROM app_meta a WHERE a.name=CONCAT('exhibit-import-',r.id)) ORDER BY r.id DESC"
     );
     auth.need(s, "request");
     return store.db.queryForList(

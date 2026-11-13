@@ -1,107 +1,176 @@
 <script setup>
-// 公开活动列表。搜索只筛选当前已加载的开放活动，不修改数据库。
-import { ref, inject, onMounted, computed } from "vue";
+import { ref, inject, onMounted, onBeforeUnmount, computed } from "vue";
 import { api, time } from "../api";
-const { open, run } = inject("app");
-const rows = ref([]);
-const query = ref("");
-const status = ref("全部活动");
-function stage(row) {
-  return new Date(row.ends) <= new Date()
-    ? "已结束"
-    : new Date(row.starts) > new Date()
-      ? "未开始"
-      : "正在进行";
+import EventCarousel from "./EventCarousel.vue";
+const { open, run, search, user } = inject("app");
+const summary = ref({});
+const rows = ref([]),
+  status = ref("全部"),
+  sort = ref("推荐优先"),
+  now = ref(Date.now());
+function topic(row) {
+  if (row.meeting_type) return row.meeting_type;
+  return row.title.includes("AI")
+    ? "人工智能"
+    : row.title.includes("云")
+      ? "云安全"
+      : row.title.includes("签到")
+        ? "现场体验"
+        : row.title.includes("交流")
+          ? "行业交流"
+          : "数据安全";
 }
-const filtered = computed(() =>
-  rows.value.filter(
-    (row) =>
-      (row.title + row.place).includes(query.value.trim()) &&
-      (status.value === "全部活动" || stage(row) === status.value),
-  ),
+function stage(row) {
+  return new Date(row.ends).getTime() <= now.value
+    ? "已结束"
+    : new Date(row.starts).getTime() > now.value
+      ? "未开始"
+      : "进行中";
+}
+function score(row) {
+  return (user.value.tags || "")
+    .split(/[,，\s]+/)
+    .filter(Boolean)
+    .filter((t) => (row.title + row.content).includes(t)).length;
+}
+const filtered = computed(() => {
+  const result = rows.value.filter(
+    (r) =>
+      (r.title + r.place + r.content)
+        .toLowerCase()
+        .includes(search.value.trim().toLowerCase()) &&
+      (status.value === "全部" || stage(r) === status.value),
+  );
+  if (sort.value === "热度最高")
+    result.sort((a, b) => b.views - a.views || a.id - b.id);
+  else if (sort.value === "时间最近")
+    result.sort(
+      (a, b) =>
+        Math.abs(new Date(a.starts) - now.value) -
+        Math.abs(new Date(b.starts) - now.value),
+    );
+  else result.sort((a, b) => score(b) - score(a) || b.views - a.views);
+  return result;
+});
+// 仅重建列表播放入场动画，轮播与统计保持原位。
+const listKey = computed(() =>
+  [search.value, status.value, sort.value].join("|"),
 );
-onMounted(() =>
+let timer;
+onMounted(() => {
   run(async () => {
     rows.value = await api("/events");
-  }),
-);
+    const names = [
+      "西湖论剑 · 数字安全未来峰会",
+      "AI 原生应用与可信计算论坛",
+      "云上共生 · 企业安全实践",
+      "行业交流会 · 报名待审核示例",
+      "现场签到体验日 · 正在签到",
+    ];
+    rows.value.sort(
+      (a, b) =>
+        (names.includes(a.title) ? names.indexOf(a.title) : 99) -
+        (names.includes(b.title) ? names.indexOf(b.title) : 99),
+    );
+    summary.value = await api("/events/summary");
+  });
+  timer = setInterval(() => {
+    now.value = Date.now();
+  }, 60000);
+});
+onBeforeUnmount(() => clearInterval(timer));
 </script>
 <template>
-  <section class="hero discovery-hero">
-    <div class="hero-copy">
-      <span class="eyebrow">会享 · 让每一次相遇都有价值</span>
-      <h1>在这里，遇见<br />下一种可能<span>。</span></h1>
-      <p>发现值得参与的交流，让每一次参会更有收获。</p>
-      <div class="search-box">
-        <span aria-hidden="true">⌕</span
-        ><input
-          v-model="query"
-          placeholder="搜索活动标题或地点"
-          aria-label="搜索活动"
-        />
+  <div class="discover-page">
+    <section v-reveal class="discover-copy">
+      <span class="eyebrow">EXPLORE · CONNECT · INSPIRE</span>
+      <h1>下一次灵感，在这里发生。</h1>
+      <p>你好，{{ user.nick }}。开启你的参会之旅 ↗</p>
+    </section>
+    <EventCarousel :slides="rows.slice(0, 3)" @open="(r) => open(r.id)" />
+    <div v-reveal class="discover-stats">
+      <div>
+        <strong>{{ String(rows.length).padStart(2, "0") }}</strong
+        ><span>场精选会议</span>
       </div>
-      <div class="hero-keywords">
-        <span>数字安全</span><span>行业交流</span><span>实践分享</span>
+      <div>
+        <strong>{{ String(summary.speakers || 0).padStart(2, "0") }}</strong
+        ><span>位行业嘉宾</span>
       </div>
-    </div>
-    <div class="hero-visual" aria-hidden="true">
-      <div class="orbit orbit-one"></div>
-      <div class="orbit orbit-two"></div>
-      <div class="visual-core">会<span>CONNECT</span></div>
-      <span class="visual-dot dot-one"></span
-      ><span class="visual-dot dot-two"></span>
-      <div class="visual-note">
-        思想汇聚 / 灵感发生<small>WESTLAKE COMMUNITY</small>
+      <div>
+        <strong>{{ String(summary.talks || 0).padStart(2, "0") }}</strong
+        ><span>个专题议程</span>
       </div>
     </div>
-  </section>
-  <div class="section-title">
-    <h2>探索活动</h2>
-    <span>{{ filtered.length }} 场交流，等待你的加入</span>
-  </div>
-  <nav class="filter-bar" aria-label="筛选活动状态">
-    <button
-      v-for="name in ['全部活动', '正在进行', '未开始', '已结束']"
-      :key="name"
-      :class="{ active: status === name }"
-      @click="status = name"
-    >
-      {{ name }}</button
-    ><span class="muted">按会议时间排序</span>
-  </nav>
-  <div class="grid">
-    <article
-      v-for="(event, index) in filtered"
-      :key="event.id"
-      class="event-card"
-    >
-      <div :class="['art', 'tone-' + (index % 3)]">
-        <span class="art-mark"
-          >{{ String(index + 1).padStart(2, "0") }} / FORUM</span
+    <div v-reveal class="discovery-toolbar">
+      <h2>发现值得参与的活动</h2>
+      <select v-model="sort" aria-label="活动排序">
+        <option>推荐优先</option>
+        <option>热度最高</option>
+        <option>时间最近</option>
+      </select>
+    </div>
+    <nav class="discovery-filters" aria-label="活动状态">
+      <button
+        v-for="name in ['全部', '未开始', '进行中', '已结束']"
+        :key="name"
+        :class="{ active: status === name }"
+        @click="status = name"
+      >
+        {{ name }}
+      </button>
+    </nav>
+    <div :key="listKey" class="activity-grid">
+      <article
+        v-for="(event, index) in filtered"
+        :key="event.id"
+        v-reveal
+        class="activity-card list-enter"
+        :style="{ animationDelay: Math.floor(index / 3) * 75 + 'ms' }"
+      >
+        <button
+          class="activity-cover"
+          :class="'cover-' + (event.id % 3)"
+          @click="open(event.id)"
         >
-        <div>
-          WESTLAKE · CONNECT<br /><strong>{{
-            event.title.replace(/【.*?】/g, "")
-          }}</strong>
+          <img
+            v-if="event.cover"
+            class="live-cover"
+            :src="event.cover"
+            alt="会议封面"
+          />
+          <small v-if="!event.cover || event.cover_title || event.meeting_type"
+            >{{ topic(event) }} /
+            {{ new Date(event.starts).getFullYear() }}</small
+          ><span
+            v-if="!event.cover || event.cover_title || event.meeting_type"
+            class="cover-caption"
+            >{{ event.cover_title || topic(event) + " · 新视野" }}</span
+          >
+        </button>
+        <div class="activity-body">
+          <span
+            class="badge"
+            :class="{
+              live: stage(event) === '进行中',
+              ended: stage(event) === '已结束',
+            }"
+            >{{ stage(event) }}</span
+          >
+          <h3>{{ event.title }}</h3>
+          <p>
+            {{ new Date(event.starts).getMonth() + 1 }}月
+            {{ new Date(event.starts).getDate() }}日 · {{ event.place }}
+          </p>
+          <div class="row">
+            <small>◉ {{ event.views || 0 }} 次浏览</small
+            ><button class="primary" @click="open(event.id)">查看活动 ↗</button>
+          </div>
         </div>
-      </div>
-      <div class="card-body">
-        <span class="tag">{{
-          new Date(event.ends) <= new Date()
-            ? "已结束"
-            : new Date(event.starts) > new Date()
-              ? "未开始"
-              : "正在进行"
-        }}</span>
-        <h2>{{ event.title }}</h2>
-        <p class="event-meta">◷ {{ time(event.starts) }}</p>
-        <p class="event-meta">⌖ {{ event.place }}</p>
-        <p class="muted">
-          {{ event.views }} 次浏览 · 最多 {{ event.capacity }} 人参与
-        </p>
-        <button class="primary" @click="open(event.id)">查看活动详情</button>
-      </div>
-    </article>
+      </article>
+      <p v-if="!filtered.length" class="empty list-enter">
+        没有匹配的会议，试试其他关键词或筛选条件。
+      </p>
+    </div>
   </div>
-  <p v-if="!filtered.length" class="empty">没有符合条件的活动。</p>
 </template>

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>会享 · 展商工作台</title>
+    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="/notifications.css" />
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="#home"
+        ><img src="/logo.png" alt="会享" />会享<span>展商工作台</span></a
+      >
+      <nav id="topnav"></nav>
+      <div class="account-group">
+        <button class="account" onclick="go('profile')">
+          <span class="avatar" id="avatar">林</span
+          ><span id="nickname"></span></button
+        ><button class="logout" onclick="signOut()">退出</button>
+      </div>
+    </header>
+    <main id="app"></main>
+    <div id="toast" role="status"></div>
+    <dialog id="modal"><div id="modalbody"></div></dialog>
+    <script src="app.js"></script>
+    <script src="v2.js"></script>
+    <script src="qr.js"></script>
+    <script src="live.js"></script>
+    <script src="/notifications.js"></script>
+  </body>
+</html>

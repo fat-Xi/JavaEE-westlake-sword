@@ -25,7 +25,7 @@ onMounted(() =>
     <span class="eyebrow">MEETING BRIEF</span>
     <h2>{{ user.role === "ADMIN" ? "会议完整信息" : "会议执行信息" }}</h2>
     <p v-if="user.role === 'STAFF'" class="muted">
-      查看会议安排和会场信息；现场核销请使用导航中的“扫码签到”。
+      查看会议安排和会场信息；现场核销请使用导航中的“签到工作台”。
     </p>
     <label v-if="!id"
       >选择会议（含已关闭）<select v-model="selected" @change="run(load)">

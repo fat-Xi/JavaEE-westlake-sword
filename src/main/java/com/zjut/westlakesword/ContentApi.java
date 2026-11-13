@@ -37,7 +37,7 @@ public class ContentApi {
 
   record Review(boolean pass, String reason) {}
 
-  record Question(long eventId, String body) {}
+  record Question(long eventId, String body, Long talkId) {}
 
   record Answer(String answer) {}
 
@@ -45,10 +45,20 @@ public class ContentApi {
   public List<Map<String, Object>> posts(@PathVariable long id, HttpSession s) {
     auth.approved(s, id);
     store.one("SELECT id FROM events WHERE id=? AND status='OPEN'", id);
-    return store.db.queryForList(
+    var rows = store.db.queryForList(
       "SELECT p.*,COALESCE(NULLIF(pr.nick,''),u.name) name,COALESCE(NULLIF(pr.nick,''),u.name) nick,pr.avatar,(SELECT COUNT(*) FROM likes l WHERE l.post_id=p.id) likes FROM posts p JOIN users u ON u.id=p.user_id LEFT JOIN profiles pr ON pr.user_id=u.id WHERE p.event_id=? AND p.status='APPROVED' ORDER BY p.created DESC,p.id DESC",
       id
     );
+    // 匿名签名对普通参会者隐藏身份，管理员审核记录仍保留真实作者。
+    for (var row : rows) {
+      if (Boolean.TRUE.equals(row.get("anonymous"))) {
+        row.put("name", "匿名参会者");
+        row.put("nick", "匿名参会者");
+        row.put("avatar", "");
+        row.remove("user_id");
+      }
+    }
+    return rows;
   }
 
   @GetMapping("/posts/mine")
@@ -112,6 +122,92 @@ public class ContentApi {
     store.log(auth.id(s), "提交内容", p.title());
   }
 
+  record Community(
+    long eventId,
+    String kind,
+    String body,
+    String tags,
+    boolean anonymous,
+    String font
+  ) {}
+
+  /** 参会者简洁编辑器：标题由服务端生成，内容仍进入原有审核队列。 */
+  @PostMapping("/community")
+  @Transactional
+  public void community(@RequestBody Community p, HttpSession s) {
+    auth.approved(s, p.eventId());
+    store.one(
+      "SELECT id FROM events WHERE id=? AND status='OPEN'",
+      p.eventId()
+    );
+    Api.check(
+      Set.of("COMMENT", "WALL").contains(p.kind() == null ? "" : p.kind()),
+      "类型错误"
+    );
+    String body = Store.word(
+      p.body(),
+      "WALL".equals(p.kind()) ? 120 : 2000,
+      "内容"
+    );
+    String tags = p.tags() == null ? "" : p.tags().strip();
+    Api.check(tags.length() <= 200, "标签最多200字");
+    String font = p.font() == null ? "sans" : p.font();
+    Api.check(Set.of("sans", "serif", "hand").contains(font), "字体错误");
+    store.db.update(
+      "INSERT INTO posts(event_id,user_id,kind,title,body,product,anonymous,font) VALUES(?,?,?,?,?,?,?,?)",
+      p.eventId(),
+      auth.id(s),
+      p.kind(),
+      "WALL".equals(p.kind()) ? "参会签名" : "会议评论",
+      body,
+      tags,
+      "WALL".equals(p.kind()) && p.anonymous(),
+      font
+    );
+    store.log(auth.id(s), "提交参会互动", p.kind());
+  }
+
+  /** 撤销待审核互动：锁定记录，防止审核通过后被误撤销。 */
+  @PostMapping("/community/{id}/withdraw")
+  @Transactional
+  public void withdrawCommunity(@PathVariable long id, HttpSession s) {
+    auth.member(s);
+    var row = store.one("SELECT * FROM posts WHERE id=? FOR UPDATE", id);
+    Api.check("PENDING".equals(row.get("status")), "该申请已处理");
+    if (Store.num(row, "user_id") != auth.id(s)) Auth.denied(
+      "只能撤销自己的记录"
+    );
+    Api.check(
+      Set.of("COMMENT", "WALL").contains(row.get("kind")),
+      "仅支持撤销评论与签名"
+    );
+    Api.check(
+      "PENDING".equals(row.get("status")),
+      "该内容已处理，请刷新后查看审核结果"
+    );
+    store.db.update("DELETE FROM likes WHERE post_id=?", id);
+    store.db.update("DELETE FROM posts WHERE id=?", id);
+    store.log(auth.id(s), "撤销互动审核", id);
+  }
+
+  @DeleteMapping("/community/{id}")
+  @Transactional
+  public void removeCommunity(@PathVariable long id, HttpSession s) {
+    auth.member(s);
+    var row = store.one("SELECT * FROM posts WHERE id=? FOR UPDATE", id);
+    Api.check("PENDING".equals(row.get("status")), "该申请已处理");
+    if (Store.num(row, "user_id") != auth.id(s)) Auth.denied(
+      "只能删除自己的记录"
+    );
+    Api.check(
+      Set.of("COMMENT", "WALL").contains(row.get("kind")),
+      "仅支持删除评论与签名"
+    );
+    store.db.update("DELETE FROM likes WHERE post_id=?", id);
+    store.db.update("DELETE FROM posts WHERE id=?", id);
+    store.log(auth.id(s), "删除参会互动", id);
+  }
+
   @PutMapping("/posts/{id}")
   @Transactional
   public void edit(@PathVariable long id, @RequestBody Post p, HttpSession s) {
@@ -158,6 +254,7 @@ public class ContentApi {
   ) {
     auth.need(s, "review");
     var row = store.one("SELECT * FROM posts WHERE id=? FOR UPDATE", id);
+    Api.check("PENDING".equals(row.get("status")), "该申请已处理");
     if (!r.pass()) Store.word(r.reason(), 200, "原因");
     store.db.update(
       "UPDATE posts SET status=?,reason=? WHERE id=?",
@@ -214,7 +311,7 @@ public class ContentApi {
   ) {
     auth.approved(s, id);
     return store.db.queryForList(
-      "SELECT q.*,u.name,(SELECT COUNT(*) FROM votes v WHERE v.question_id=q.id) votes FROM questions q JOIN users u ON u.id=q.user_id WHERE q.event_id=? AND (q.status='APPROVED' OR q.user_id=?) ORDER BY votes DESC,q.id DESC",
+      "SELECT q.*,COALESCE(NULLIF(pr.nick,''),u.name) name,pr.avatar,(SELECT COUNT(*) FROM votes v WHERE v.question_id=q.id) votes FROM questions q JOIN users u ON u.id=q.user_id LEFT JOIN profiles pr ON pr.user_id=u.id WHERE q.event_id=? AND (q.status='APPROVED' OR q.user_id=?) ORDER BY votes DESC,q.id DESC",
       id,
       auth.id(s)
     );
@@ -224,11 +321,17 @@ public class ContentApi {
   public void question(@RequestBody Question q, HttpSession s) {
     auth.approved(s, q.eventId());
     Store.word(q.body(), 500, "问题");
+    if (q.talkId() != null) store.one(
+      "SELECT id FROM talks WHERE id=? AND event_id=?",
+      q.talkId(),
+      q.eventId()
+    );
     store.db.update(
-      "INSERT INTO questions(event_id,user_id,body) VALUES(?,?,?)",
+      "INSERT INTO questions(event_id,user_id,body,talk_id) VALUES(?,?,?,?)",
       q.eventId(),
       auth.id(s),
-      q.body()
+      q.body(),
+      q.talkId()
     );
   }
 
@@ -262,19 +365,28 @@ public class ContentApi {
   }
 
   @PostMapping("/review/questions/{id}")
+  @Transactional
   public void reviewQuestion(
     @PathVariable long id,
     @RequestBody Review r,
     HttpSession s
   ) {
     auth.need(s, "review");
-    store.one("SELECT id FROM questions WHERE id=?", id);
+    var q = store.one("SELECT * FROM questions WHERE id=? FOR UPDATE", id);
+    Api.check("PENDING".equals(q.get("status")), "该申请已处理");
     if (!r.pass()) Store.word(r.reason(), 200, "原因");
     store.db.update(
       "UPDATE questions SET status=?,reason=? WHERE id=?",
       r.pass() ? "APPROVED" : "REJECTED",
       r.pass() ? "" : r.reason(),
       id
+    );
+    store.note(
+      Store.num(q, "user_id"),
+      "提问「" +
+        q.get("body") +
+        "」" +
+        (r.pass() ? "审核通过" : "被驳回：" + r.reason())
     );
     store.log(auth.id(s), "问题审核", id);
   }

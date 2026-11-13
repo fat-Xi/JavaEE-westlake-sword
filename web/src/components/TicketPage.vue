@@ -34,6 +34,16 @@ onMounted(() =>
         ? shared
         : events.value[0]?.event_id || 0);
     await load();
+    if (
+      rows.value.some(
+        (r) =>
+          !r.checked &&
+          r.enabled &&
+          new Date(r.starts) <= new Date() &&
+          new Date(r.ends) > new Date(),
+      )
+    )
+      await ticket();
     timer = setInterval(async () => {
       if (eventId.value)
         try {
@@ -46,7 +56,7 @@ onBeforeUnmount(() => clearInterval(timer));
 </script>
 <template>
   <section class="panel">
-    <h1>签到服务</h1>
+    <h1>参会签到</h1>
     <p>
       报名通过后，按管理员发布的议程时间出示个人签到码。工作人员核销后，页面会显示已签到。
     </p>
@@ -88,7 +98,11 @@ onBeforeUnmount(() => clearInterval(timer));
           }}
         </p>
         <button
-          v-if="row.enabled && new Date(row.ends) > new Date()"
+          v-if="
+            row.enabled &&
+            new Date(row.starts) <= new Date() &&
+            new Date(row.ends) > new Date()
+          "
           @click="ticket"
         >
           出示个人签到码

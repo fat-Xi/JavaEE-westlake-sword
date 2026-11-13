@@ -31,6 +31,19 @@ public class PollApi {
 
   record State(boolean enabled) {}
 
+  @GetMapping("/events/{id}/poll-info")
+  public Map<String,Object> info(@PathVariable long id, HttpSession s) {
+    auth.approved(s,id);
+    var info=store.db.queryForList("SELECT r.poll_title title,COALESCE(NULLIF(p.nick,''),u.name) publisher FROM requests r JOIN users u ON u.id=r.user_id LEFT JOIN profiles p ON p.user_id=u.id WHERE r.event_id=? AND r.status='CREATED' ORDER BY r.id DESC LIMIT 1",id);
+    long people=store.count("SELECT COUNT(DISTINCT b.user_id) FROM ballots b JOIN polls p ON p.id=b.poll_id WHERE p.event_id=?",id);
+    var result=new HashMap<String,Object>();
+    result.put("title",info.isEmpty() || String.valueOf(info.get(0).get("title")).isBlank()?"会议意见征集":info.get(0).get("title"));
+    result.put("publisher",info.isEmpty()?"会议主办方":info.get(0).get("publisher"));
+    var headings=store.db.queryForList("SELECT heading FROM polls WHERE event_id=? AND heading<>'' ORDER BY id DESC LIMIT 1",id);
+    if(!headings.isEmpty())result.put("title",headings.get(0).get("heading"));
+    result.put("people",people);return result;
+  }
+
   @GetMapping("/events/{id}/polls")
   public List<Map<String, Object>> list(@PathVariable long id, HttpSession s) {
     if ("ADMIN".equals(auth.role(s))) auth.admin(s);
@@ -119,6 +132,25 @@ public class PollApi {
     store.one("SELECT id FROM polls WHERE id=? FOR UPDATE", id);
     store.db.update("UPDATE polls SET enabled=? WHERE id=?", f.enabled(), id);
     store.log(auth.id(s), f.enabled() ? "开放投票" : "关闭投票", id);
+  }
+
+  record Pick(long pollId, long optionId) {}
+  record Batch(List<Pick> answers) {}
+
+  /** 多题统一提交；任何一题无效时整批回滚，避免只保存部分答案。 */
+  @PostMapping("/events/{id}/polls/vote")
+  @Transactional
+  public void batch(@PathVariable long id, @RequestBody Batch f, HttpSession s) {
+    store.one("SELECT id FROM events WHERE id=? AND status='OPEN' FOR UPDATE", id);
+    auth.approved(s, id);
+    Api.check(f.answers() != null && !f.answers().isEmpty() && f.answers().size() <= 100, "请选择投票答案");
+    var ordered = f.answers().stream().sorted(Comparator.comparingLong(Pick::pollId)).toList();
+    Api.check(ordered.stream().map(Pick::pollId).distinct().count() == ordered.size(), "不能重复提交同一题");
+    for (var pick : ordered) {
+      var poll = store.one("SELECT event_id FROM polls WHERE id=? FOR UPDATE", pick.pollId());
+      Api.check(Store.num(poll, "event_id") == id, "投票不属于当前会议");
+      vote(pick.pollId(), new Ballot(pick.optionId()), s);
+    }
   }
 
   @PostMapping("/polls/{id}/vote")

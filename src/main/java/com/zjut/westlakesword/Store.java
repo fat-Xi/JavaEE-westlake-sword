@@ -102,6 +102,9 @@ public class Store {
   }
 
   public void note(long user, String body) {
+    // 保留有效通知，长评论/提问避免超过数据库字段长度导致审核回滚。
+    if (body.codePointCount(0, body.length()) > 500) body =
+      body.substring(0, body.offsetByCodePoints(0, 499)) + "…";
     db.update("INSERT INTO notes(user_id,body) VALUES(?,?)", user, body);
   }
 }
