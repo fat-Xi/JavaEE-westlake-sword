@@ -13,9 +13,16 @@ public class TalkApi {
   private final Store store;
   private final Auth auth;
 
-  public TalkApi(Store store, Auth auth) {
+  private final AgendaRecommendations recommendations;
+
+  public TalkApi(
+    Store store,
+    Auth auth,
+    AgendaRecommendations recommendations
+  ) {
     this.store = store;
     this.auth = auth;
+    this.recommendations = recommendations;
   }
 
   record Talk(
@@ -96,6 +103,10 @@ public class TalkApi {
       store.count("SELECT COUNT(*) FROM attendance WHERE talk_id=?", id) == 0,
       "该议程已发布签到，不能删除"
     );
+    Api.check(
+      store.count("SELECT COUNT(*) FROM questions WHERE talk_id=?", id) == 0,
+      "该议程已有提问，不能删除"
+    );
     store.db.update("DELETE FROM talks WHERE id=?", id);
     store.log(auth.id(s), "删除议程", id);
   }
@@ -159,44 +170,8 @@ public class TalkApi {
     HttpSession s
   ) {
     auth.approved(s, id);
-    var profiles = store.db.queryForList(
-      "SELECT tags FROM profiles WHERE user_id=?",
-      auth.id(s)
-    );
-    String interests = profiles.isEmpty()
-      ? ""
-      : (String) profiles.get(0).get("tags");
-    Set<String> tags = new HashSet<>(
-      Arrays.asList(interests.toLowerCase().split("[,，\\s]+"))
-    );
-    tags.remove("");
-    var list = store.db.queryForList(
-      "SELECT t.*,(SELECT COUNT(*) FROM plans p WHERE p.talk_id=t.id) popularity FROM talks t WHERE event_id=? AND ends>NOW()",
-      id
-    );
-    for (var t : list) {
-      long score = tags
-        .stream()
-        .filter(tag -> ((String) t.get("tags")).toLowerCase().contains(tag))
-        .count();
-      t.put("score", score);
-      t.put(
-        "reason",
-        score > 0 ? "匹配你的兴趣标签" : "按真实日程收藏人数推荐"
-      );
-    }
-    list.sort(
-      Comparator.<Map<String, Object>>comparingLong(t ->
-        ((Number) t.get("score")).longValue()
-      )
-        .reversed()
-        .thenComparing(
-          Comparator.comparingLong((Map<String, Object> t) ->
-            ((Number) t.get("popularity")).longValue()
-          ).reversed()
-        )
-    );
-    return list;
+    store.one("SELECT id FROM events WHERE id=? AND status='OPEN'", id);
+    return recommendations.find(auth.id(s), id).stream().limit(6).toList();
   }
 
   /** 仅返回模块契约，不伪造 AI、地图或话题业务结果。 */
@@ -208,6 +183,14 @@ public class TalkApi {
   ) {
     auth.approved(s, id);
     Api.check(Set.of("map", "ai", "topic").contains(name), "模块不存在");
+    if ("ai".equals(name)) return Map.of(
+      "name",
+      name,
+      "enabled",
+      true,
+      "message",
+      "AI 问答已启用"
+    );
     return Map.of(
       "name",
       name,

@@ -13,10 +13,27 @@ public class AiParticipant {
   public record Direct(
     String mode,
     String answer,
-    List<AiKnowledge.Source> sources
-  ) {}
+    List<AiKnowledge.Source> sources,
+    Set<Long> eventIds,
+    boolean summarize
+  ) {
+    Direct(
+      String mode,
+      String answer,
+      List<AiKnowledge.Source> sources,
+      Set<Long> eventIds
+    ) {
+      this(mode, answer, sources, eventIds, false);
+    }
+
+    Direct(String mode, String answer, List<AiKnowledge.Source> sources) {
+      this(mode, answer, sources, Set.of());
+    }
+  }
 
   private final Store store;
+  private final AgendaRecommendations recommendations;
+  private final AiMeetingFacts meetingFacts;
   private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern(
     "yyyy-MM-dd HH:mm"
   );
@@ -65,7 +82,7 @@ public class AiParticipant {
       "FILES",
       "materials",
       "会议资料下载",
-      "会议报名通过后，在直播和回放页下载该会议资料。无权限时检查账号身份和会议报名是否分别审核通过；确认文件属于当前会议。链接打不开时可刷新会议页面、重新登录后重试。参会者不负责上传正式会议资料，这由展商提交、管理员审核维护。"
+      "会议报名通过后，在会议详情的「展商内容」找到已公开的资料并下载。无权限时检查账号身份和会议报名是否分别审核通过，并确认文件属于当前会议。链接打不开时可刷新会议页面、重新登录后重试。正式会议资料由展商提交、管理员审核。"
     ),
     rule(
       "MEDIA",
@@ -76,14 +93,14 @@ public class AiParticipant {
     rule(
       "QUESTION",
       "questions",
-      "会议提问与单选投票",
-      "会议提问提交后等待管理员审核；待审和驳回问题仅作者可见，审核通过后公开，由主办方答复。独立单选投票由管理员发布，在开放时间每人每题只能投一次，提交后不能改票。"
+      "提问、赞同与单选投票",
+      "会议提问可关联议程或选择全会；待审和驳回问题仅作者可见，审核通过后公开。可以赞同或撤销赞同，管理员可精选、答复和关闭问题。关闭或会议结束后不能新增赞同，已赞同者仍可撤销。议程投票在开放时间每人每题只能投一次，提交后不能改票，与提问赞同分开计数。"
     ),
     rule(
       "COMMUNITY",
       "community",
       "评论、签名、分享和通知",
-      "会议报名通过后可在会议评论、签名墙发表内容，审核通过后公开，作者可在个人主页查看自己的全部发表状态。展商内容支持点赞和取消点赞；自己的评论与签名可在个人主页查看原文或删除。议程分享按钮复制分享链接。订阅会议后可在个人主页查看订阅及站内通知；当前没有邀请同行或短信提醒服务。"
+      "会议报名通过后，评论和评论回复提交后直接公开。可举报他人的违规评论，管理员审核举报后可保留或删除评论，也可发现违规时直接删除。删除会同时移除下方所有回复，并通过站内通知向受影响的作者说明理由。会议提问只由对应主办方提交答复，审核通过后公开。签名审核通过后公开，作者可在个人主页查看评论和签名。展商内容支持点赞和取消点赞。议程分享按钮复制分享链接。订阅会议后可在个人主页查看订阅及站内通知；当前没有邀请同行或短信提醒服务。"
     ),
     rule(
       "SUPPORT",
@@ -93,8 +110,14 @@ public class AiParticipant {
     )
   );
 
-  public AiParticipant(Store store) {
+  public AiParticipant(
+    Store store,
+    AgendaRecommendations recommendations,
+    AiKnowledge knowledge
+  ) {
     this.store = store;
+    this.recommendations = recommendations;
+    this.meetingFacts = new AiMeetingFacts(store, knowledge);
   }
 
   private static AiKnowledge.Source rule(
@@ -149,8 +172,11 @@ public class AiParticipant {
           "个人信息",
           "联系方式",
           "报名状态",
+          "报名的会议",
+          "参加的会议",
           "签到记录",
           "日程",
+          "安排",
           "通知",
           "消息"
         ))
@@ -165,6 +191,7 @@ public class AiParticipant {
 
   static boolean availableQuestion(String q) {
     return (
+      !has(q, "议程", "讲座", "场次", "分论坛") &&
       has(
         q,
         "可报名",
@@ -273,7 +300,32 @@ public class AiParticipant {
     );
   }
 
-  public Direct direct(String question, long user, String model) {
+  private static boolean agendaRecommendation(String q) {
+    return (
+      has(q, "议程", "讲座", "场次", "分论坛") &&
+      (has(q, "推荐", "适合我") ||
+        (has(q, "哪些", "哪几", "哪场", "哪一场") &&
+          has(q, "值得", "能参加", "可以参加"))) &&
+      !has(
+        q,
+        "怎么",
+        "如何",
+        "怎样",
+        "为什么",
+        "在哪",
+        "哪里",
+        "根据什么",
+        "按什么",
+        "原理",
+        "算法",
+        "规则",
+        "机制",
+        "推荐功能"
+      )
+    );
+  }
+
+  public Direct direct(String question, long user, String model, Long eventId) {
     String q = normalized(question);
     boolean workflow = has(
       q.replace("怎么样", ""),
@@ -320,32 +372,53 @@ public class AiParticipant {
       List.of(RULES.get(0))
     );
     if (availableQuestion(q)) return catalog(user, true);
+    if (agendaRecommendation(q)) return recommend(user, eventId);
+    boolean joinedList = has(
+      q,
+      "已报名的会议",
+      "我报名的会议",
+      "我报过的会议",
+      "我参加的会议"
+    );
     if (
-      has(
-        q,
-        "我的报名",
-        "我报名",
-        "我报了",
-        "我已经报",
-        "报名状态",
-        "报名情况",
-        "我的审核",
-        "我通过审核",
-        "我的会议"
-      ) &&
+      (joinedList ||
+        has(
+          q,
+          "我的报名",
+          "我报名",
+          "我报了",
+          "我已经报",
+          "报名状态",
+          "报名情况",
+          "我的审核",
+          "我通过审核",
+          "我的会议"
+        )) &&
       !workflow
-    ) return registrations(user);
+    ) return registrations(user, eventId, joinedList);
+    boolean upcomingPlans = has(
+      q,
+      "接下来有什么安排",
+      "接下来有哪些安排",
+      "接下来的安排",
+      "接下来的日程",
+      "接下来有哪些日程"
+    );
     if (
-      has(
-        q,
-        "我的日程",
-        "我的行程",
-        "我添加的日程",
-        "我的安排",
-        "我收藏的议程"
-      ) &&
+      (upcomingPlans ||
+        has(
+          q,
+          "我的日程",
+          "我的行程",
+          "我的个人日程",
+          "我的会议日程",
+          "我的参会安排",
+          "我添加的日程",
+          "我的安排",
+          "我收藏的议程"
+        )) &&
       !workflow
-    ) return plans(user);
+    ) return plans(user, eventId, upcomingPlans);
     if (
       has(
         q,
@@ -356,12 +429,74 @@ public class AiParticipant {
         "我的核销"
       ) &&
       !workflow
-    ) return checkins(user);
+    ) return checkins(user, eventId);
     if (
       has(q, "我的通知", "我的消息", "未读通知", "未读消息") && !workflow
-    ) return notes(user);
+    ) return notes(user, has(q, "未读"));
+    if (!workflow) {
+      var meetingAnswer = meetingFacts.answer(q, user, eventId);
+      if (meetingAnswer != null) return meetingAnswer;
+    }
     if (catalogQuestion(q)) return catalog(user, false);
     return null;
+  }
+
+  private Direct recommend(long user, Long eventId) {
+    var rows = recommendations
+      .find(user, eventId)
+      .stream()
+      .filter(row -> ((List<?>) row.get("conflicts")).isEmpty())
+      .limit(3)
+      .toList();
+    if (rows.isEmpty()) return new Direct(
+      "platform",
+      "目前没有可推荐的议程。推荐范围是报名已通过的会议，已结束、已加入日程和时间冲突的场次会被排除。",
+      List.of()
+    );
+    StringBuilder answer = new StringBuilder(
+      eventId == null
+        ? "从你已通过报名的会议中，推荐以下议程（北京时间）："
+        : "这场会议里，推荐以下议程（北京时间）："
+    );
+    List<AiKnowledge.Source> sources = new ArrayList<>();
+    Set<Long> eventIds = new HashSet<>();
+    for (var row : rows) {
+      long event = Store.num(row, "event_id"),
+        talk = Store.num(row, "id");
+      eventIds.add(event);
+      String title = row.get("title") + " · " + row.get("event_title");
+      String details =
+        time(row.get("starts")) +
+        " 至 " +
+        time(row.get("ends")) +
+        " · " +
+        row.get("room");
+      String reason = (String) row.get("reason");
+      answer
+        .append("\n\n")
+        .append(sources.size() + 1)
+        .append(". ")
+        .append(title)
+        .append("\n")
+        .append(details)
+        .append("\n")
+        .append(reason);
+      sources.add(
+        new AiKnowledge.Source(
+          "RECOMMENDED_TALK_" + talk,
+          "talk",
+          title,
+          details + "\n" + reason,
+          "/?event=" + event + "&tab=talks#talk-" + talk
+        )
+      );
+    }
+    return new Direct(
+      "platform",
+      answer.toString(),
+      sources,
+      Set.copyOf(eventIds)
+    );
   }
 
   private List<Map<String, Object>> catalogRows(long user) {
@@ -381,7 +516,7 @@ public class AiParticipant {
     );
   }
 
-  private static String time(Object value) {
+  static String time(Object value) {
     return value instanceof LocalDateTime d
       ? d.format(TIME)
       : Objects.toString(value, "—");
@@ -463,16 +598,27 @@ public class AiParticipant {
     return new Direct("platform", answer.toString(), sources);
   }
 
-  private Direct registrations(long user) {
+  private Direct registrations(long user, Long eventId, boolean joinedList) {
     var rows = store.db.queryForList(
-      "SELECT e.id,e.title,j.status,j.reason FROM joins j JOIN events e ON e.id=j.event_id WHERE j.user_id=? ORDER BY j.id DESC LIMIT 30",
-      user
+      "SELECT e.id,e.title,j.status,j.reason FROM joins j JOIN events e ON e.id=j.event_id WHERE j.user_id=?" +
+        (eventId == null ? "" : " AND j.event_id=?") +
+        (joinedList ? " AND j.status IN ('PENDING','APPROVED')" : "") +
+        " ORDER BY j.id DESC LIMIT 30",
+      eventId == null ? new Object[] { user } : new Object[] { user, eventId }
     );
     StringBuilder answer = new StringBuilder(
-      "你的参会者身份已通过审核，会议报名单独审核。以下展示最近30条报名记录。\n"
+      eventId == null
+        ? "你的会议报名记录如下，最多显示最近 30 条。"
+        : "这场会议的报名记录如下。"
     );
-    if (rows.isEmpty()) answer.append(
-      "你目前没有会议报名记录，可以前往发现活动报名。"
+    if (rows.isEmpty()) return personal(
+      "MY_JOINS",
+      "本人的报名状态",
+      eventId != null
+        ? "你在这场会议里暂无报名记录。"
+        : joinedList
+          ? "你目前没有待审核或已通过的会议报名。"
+          : "你目前没有会议报名记录，可以前往发现活动报名。"
     );
     else for (var row : rows)
       answer
@@ -488,15 +634,25 @@ public class AiParticipant {
     return personal("MY_JOINS", "本人的报名状态", answer.toString());
   }
 
-  private Direct plans(long user) {
+  private Direct plans(long user, Long eventId, boolean upcoming) {
     var rows = store.db.queryForList(
-      "SELECT e.title event_title,t.title,t.starts,t.ends,t.room FROM plans p JOIN talks t ON t.id=p.talk_id JOIN events e ON e.id=t.event_id JOIN joins j ON j.event_id=e.id AND j.user_id=p.user_id WHERE p.user_id=? AND j.status='APPROVED' ORDER BY t.starts LIMIT 30",
-      user
+      "SELECT e.title event_title,t.title,t.starts,t.ends,t.room FROM plans p JOIN talks t ON t.id=p.talk_id JOIN events e ON e.id=t.event_id JOIN joins j ON j.event_id=e.id AND j.user_id=p.user_id WHERE p.user_id=? AND j.status='APPROVED'" +
+        (eventId == null ? "" : " AND t.event_id=?") +
+        (upcoming ? " AND e.status='OPEN' AND t.ends>NOW()" : "") +
+        " ORDER BY t.starts,t.id LIMIT 30",
+      eventId == null ? new Object[] { user } : new Object[] { user, eventId }
     );
+    String scope = eventId == null ? "你的" : "这场会议中你的";
     StringBuilder answer = new StringBuilder(
       rows.isEmpty()
-        ? "你目前没有个人日程。报名通过后，可从会议议程或推荐区加入日程。"
-        : "你已加入的个人日程（北京时间）："
+        ? scope +
+            (upcoming
+              ? "个人日程暂无未结束的安排。"
+              : "个人日程还没有已加入的议程。")
+        : scope +
+            (upcoming
+              ? "接下来的个人日程如下，时间为北京时间。"
+              : "个人日程如下，时间为北京时间。")
     );
     for (var row : rows)
       answer
@@ -513,15 +669,19 @@ public class AiParticipant {
     return personal("MY_PLANS", "本人的个人日程", answer.toString());
   }
 
-  private Direct checkins(long user) {
+  private Direct checkins(long user, Long eventId) {
     var rows = store.db.queryForList(
-      "SELECT e.title event_title,t.title,m.checked FROM marks m JOIN attendance a ON a.id=m.session_id JOIN talks t ON t.id=a.talk_id JOIN events e ON e.id=t.event_id WHERE m.user_id=? ORDER BY m.checked DESC LIMIT 30",
-      user
+      "SELECT e.title event_title,t.title,m.checked FROM marks m JOIN attendance a ON a.id=m.session_id JOIN talks t ON t.id=a.talk_id JOIN events e ON e.id=t.event_id WHERE m.user_id=?" +
+        (eventId == null ? "" : " AND t.event_id=?") +
+        " ORDER BY m.checked DESC LIMIT 30",
+      eventId == null ? new Object[] { user } : new Object[] { user, eventId }
     );
     StringBuilder answer = new StringBuilder(
       rows.isEmpty()
-        ? "目前没有查询到你的议程签到记录。请到已通过报名会议的签到服务出示本人签到码，由工作人员核销。"
-        : "你已完成的议程签到："
+        ? eventId == null
+          ? "目前没有查询到你的议程签到记录。"
+          : "这场会议暂无你的议程签到记录。"
+        : "你已完成的议程签到如下。"
     );
     for (var row : rows)
       answer
@@ -530,24 +690,36 @@ public class AiParticipant {
         .append(" · ")
         .append(row.get("title"))
         .append("：")
-        .append(row.get("checked"));
+        .append(time(row.get("checked")));
     return personal("MY_CHECKINS", "本人的签到记录", answer.toString());
   }
 
-  private Direct notes(long user) {
+  private Direct notes(long user, boolean unread) {
     var rows = store.db.queryForList(
-      "SELECT body,seen FROM notes WHERE user_id=? ORDER BY id DESC LIMIT 10",
+      "SELECT body,seen FROM notes WHERE user_id=?" +
+        (unread ? " AND COALESCE(seen,FALSE)=FALSE" : "") +
+        " ORDER BY id DESC LIMIT 10",
       user
     );
     StringBuilder answer = new StringBuilder(
-      rows.isEmpty() ? "你目前没有站内通知。" : "你最近的站内通知（最多10条）："
+      rows.isEmpty()
+        ? unread
+          ? "你目前没有未读站内通知。"
+          : "你目前没有站内通知。"
+        : unread
+          ? "这是你最近的未读通知，最多显示 10 条。"
+          : "这是你最近的站内通知，最多显示 10 条。"
     );
     for (var row : rows)
       answer
         .append("\n")
         .append(Boolean.TRUE.equals(row.get("seen")) ? "[已读] " : "[未读] ")
         .append(row.get("body"));
-    return personal("MY_NOTES", "本人的站内通知", answer.toString());
+    return personal(
+      "MY_NOTES",
+      unread ? "本人的未读通知" : "本人的站内通知",
+      answer.toString()
+    );
   }
 
   private static Direct personal(String id, String title, String text) {
@@ -562,11 +734,13 @@ public class AiParticipant {
 
   public List<AiKnowledge.Source> context(
     String question,
-    List<AiKnowledge.Source> selected
+    List<AiKnowledge.Source> selected,
+    Long eventId
   ) {
     String q = normalized(question);
     List<AiKnowledge.Source> publicFacts = List.of();
     if (
+      eventId == null &&
       has(
         q,
         "时间",

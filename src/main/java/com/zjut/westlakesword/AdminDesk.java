@@ -53,13 +53,26 @@ public class AdminDesk {
     d.put(
       "questions",
       store.db.queryForList(
-        "SELECT q.*,COALESCE(NULLIF(p.nick,''),u.name) author FROM questions q JOIN users u ON u.id=q.user_id LEFT JOIN profiles p ON p.user_id=u.id ORDER BY q.id DESC"
+        "SELECT q.*,COALESCE(NULLIF(p.nick,''),u.name) author,(SELECT COUNT(*) FROM votes v WHERE v.question_id=q.id) votes FROM questions q JOIN users u ON u.id=q.user_id LEFT JOIN profiles p ON p.user_id=u.id ORDER BY q.featured DESC,votes DESC,q.id DESC"
       )
     );
     d.put(
       "posts",
       store.db.queryForList(
         "SELECT t.*,COALESCE(NULLIF(p.nick,''),u.name) author FROM posts t JOIN users u ON u.id=t.user_id LEFT JOIN profiles p ON p.user_id=u.id WHERE t.kind IN ('COMMENT','WALL') ORDER BY t.id DESC"
+      )
+    );
+    d.put(
+      "commentReports",
+      store.db.queryForList(
+        """
+        SELECT r.*,c.body,e.title event_title,
+          COALESCE(NULLIF(p.nick,''),a.name) author,u.name reporter
+        FROM comment_reports r JOIN posts c ON c.id=r.post_id
+        JOIN events e ON e.id=c.event_id JOIN users a ON a.id=c.user_id
+        JOIN users u ON u.id=r.reporter_id LEFT JOIN profiles p ON p.user_id=a.id
+        ORDER BY r.id DESC
+        """
       )
     );
     d.put(

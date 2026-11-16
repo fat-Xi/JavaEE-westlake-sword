@@ -1,6 +1,7 @@
 package com.zjut.westlakesword;
 
 import jakarta.servlet.http.HttpSession;
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 import org.slf4j.Logger;
@@ -22,8 +23,30 @@ public class AiApi {
     String answer,
     List<AiKnowledge.Source> sources,
     String notice,
-    String model
+    String model,
+    String replyId
+  ) {
+    Reply(
+      String mode,
+      String answer,
+      List<AiKnowledge.Source> sources,
+      String notice,
+      String model
+    ) {
+      this(mode, answer, sources, notice, model, null);
+    }
+  }
+
+  private record VoiceReply(
+    long userId,
+    Long eventId,
+    Set<Long> additionalEventIds,
+    String answer,
+    Instant expiresAt
   ) {}
+
+  private static final String VOICE_REPLIES =
+    AiApi.class.getName() + ".voiceReplies";
 
   private final Store store;
   private final Auth auth;
@@ -115,6 +138,118 @@ public class AiApi {
     else eligible(id, s);
   }
 
+  @SuppressWarnings("unchecked")
+  private Map<String, VoiceReply> voiceReplies(HttpSession session) {
+    var replies = (Map<String, VoiceReply>) session.getAttribute(VOICE_REPLIES);
+    if (replies == null) {
+      replies = new LinkedHashMap<>();
+      session.setAttribute(VOICE_REPLIES, replies);
+    }
+    return replies;
+  }
+
+  private Reply remember(
+    Reply reply,
+    long userId,
+    Long eventId,
+    Set<Long> additionalEventIds,
+    HttpSession session
+  ) {
+    String id = UUID.randomUUID().toString();
+    synchronized (session) {
+      try {
+        var replies = voiceReplies(session);
+        replies
+          .values()
+          .removeIf(value -> !value.expiresAt().isAfter(Instant.now()));
+        if (replies.size() >= 10) replies.remove(
+          replies.keySet().iterator().next()
+        );
+        replies.put(
+          id,
+          new VoiceReply(
+            userId,
+            eventId,
+            additionalEventIds,
+            reply.answer(),
+            Instant.now().plusSeconds(900)
+          )
+        );
+      } catch (IllegalStateException e) {
+        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "请先登录");
+      }
+    }
+    return new Reply(
+      reply.mode(),
+      reply.answer(),
+      reply.sources(),
+      reply.notice(),
+      reply.model(),
+      id
+    );
+  }
+
+  String voiceAnswer(String id, HttpSession session) {
+    VoiceReply reply;
+    synchronized (session) {
+      try {
+        reply = voiceReplies(session).get(id);
+      } catch (IllegalStateException e) {
+        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "请先登录");
+      }
+    }
+    if (
+      reply == null ||
+      reply.userId() != auth.id(session) ||
+      !reply.expiresAt().isAfter(Instant.now())
+    ) {
+      throw new ResponseStatusException(
+        HttpStatus.NOT_FOUND,
+        "回答已过期或不属于当前会话，请重新提问"
+      );
+    }
+    access(reply.eventId(), session);
+    for (long event : reply.additionalEventIds()) eligible(event, session);
+    return reply.answer();
+  }
+
+  private Reply summary(String question, AiParticipant.Direct direct) {
+    var sources = direct.sources();
+    var links = sources.stream().limit(3).toList();
+    if (client.configured()) {
+      try {
+        var answer = client.summarize(question, sources);
+        if (answer.answerable()) return modelReply(answer, sources);
+        return new Reply("platform", direct.answer(), links, "", "");
+      } catch (AiModelClient.Unavailable e) {
+        LOG.warn("AI provider unavailable ({})", e.getMessage());
+      }
+    }
+    return new Reply(
+      "faq",
+      "暂时无法生成会议亮点总结。可以打开下方资料查看原文。",
+      links,
+      "",
+      ""
+    );
+  }
+
+  private Reply modelReply(
+    AiModelClient.Answer answer,
+    List<AiKnowledge.Source> sources
+  ) {
+    return new Reply(
+      "model",
+      answer.answer(),
+      sources
+        .stream()
+        .filter(source -> answer.sourceIds().contains(source.id()))
+        .toList(),
+      "",
+      client.model()
+    );
+  }
+
   private Reply respond(Long id, String input, HttpSession s) {
     access(id, s);
     String question = Store.word(input, 500, "问题");
@@ -130,20 +265,26 @@ public class AiApi {
         "问答服务繁忙，请稍后再试"
       );
       Reply reply;
-      var direct = participant.direct(question, user, client.model());
-      if (direct != null) reply = new Reply(
-        direct.mode(),
-        direct.answer(),
-        direct.sources(),
-        "",
-        ""
-      );
-      else {
+      var direct = participant.direct(question, user, client.model(), id);
+      var additionalEventIds =
+        id == null && direct != null ? direct.eventIds() : Set.<Long>of();
+      if (direct != null && direct.summarize()) {
+        for (long event : additionalEventIds) eligible(event, s);
+        reply = summary(question, direct);
+      } else if (direct != null) {
+        reply = new Reply(
+          direct.mode(),
+          direct.answer(),
+          direct.sources(),
+          "",
+          ""
+        );
+      } else {
         var selected =
           id == null
             ? List.<AiKnowledge.Source>of()
             : knowledge.search(id, question);
-        var sources = participant.context(question, selected);
+        var sources = participant.context(question, selected, id);
         if (sources.isEmpty()) reply = new Reply(
           "refused",
           "这个问题超出参会服务范围。我可以帮你查询会议、报名、个人日程、签到、资料及平台互动相关问题。",
@@ -159,16 +300,7 @@ public class AiApi {
           try {
             var answer = client.answer(question, sources);
             reply = answer.answerable()
-              ? new Reply(
-                  "model",
-                  answer.answer(),
-                  sources
-                    .stream()
-                    .filter(source -> answer.sourceIds().contains(source.id()))
-                    .toList(),
-                  "",
-                  client.model()
-                )
+              ? modelReply(answer, sources)
               : refused();
           } catch (AiModelClient.Unavailable e) {
             LOG.warn("AI provider unavailable ({})", e.getMessage());
@@ -178,7 +310,8 @@ public class AiApi {
       }
       // 长请求结束前重新检查资格，报名被撤销或会议关闭后不再返回资料。
       access(id, s);
-      return reply;
+      for (long event : additionalEventIds) eligible(event, s);
+      return remember(reply, user, id, additionalEventIds, s);
     } finally {
       if (acquired) slots.release();
       inFlight.remove(user);

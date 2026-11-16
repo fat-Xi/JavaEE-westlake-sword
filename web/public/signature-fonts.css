@@ -1,0 +1,61 @@
+@font-face {
+  font-family: "Huixiang Signature Sans";
+  src: url("./fonts/signature/NotoSansSC.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Huixiang Signature Serif";
+  src: url("./fonts/signature/NotoSerifSC.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Huixiang Signature Hand";
+  src: url("./fonts/signature/LXGWWenKaiLite.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Huixiang Signature Rounded";
+  src: url("./fonts/signature/ZCOOLKuaiLe.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Huixiang Signature Brush";
+  src: url("./fonts/signature/ZhiMangXing.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+.font-sans,
+.font-bold {
+  font-family:
+    "Huixiang Signature Sans", "Microsoft YaHei", "PingFang SC",
+    sans-serif;
+}
+.font-serif {
+  font-family:
+    "Huixiang Signature Serif", SimSun, "宋体", "Songti SC", serif;
+}
+.font-hand {
+  font-family:
+    "Huixiang Signature Hand", KaiTi, "楷体", "Kaiti SC", STKaiti, cursive;
+}
+.font-bold {
+  font-weight: 700;
+  font-synthesis: weight;
+}
+.font-round {
+  font-family:
+    "Huixiang Signature Rounded", "Huixiang Signature Sans", sans-serif;
+}
+.font-brush {
+  font-family:
+    "Huixiang Signature Brush", "Huixiang Signature Hand", cursive;
+}

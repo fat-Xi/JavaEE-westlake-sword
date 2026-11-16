@@ -12,6 +12,103 @@ import org.springframework.web.server.ResponseStatusException;
 
 class AiApiTests {
 
+  @Test
+  void meetingSummaryReturnsModelTextOrOffersItsMaterials() {
+    var material = new AiKnowledge.Source(
+      "INTRO7",
+      "overview",
+      "会议介绍",
+      "演示报名与现场核销流程",
+      "/?event=7&tab=intro"
+    );
+    var participant = new AiParticipant(
+      store,
+      recommendations,
+      new AiKnowledge(store)
+    ) {
+      @Override
+      public Direct direct(
+        String question,
+        long user,
+        String model,
+        Long eventId
+      ) {
+        return new Direct(
+          "platform",
+          "资料不足。",
+          List.of(material),
+          Set.of(7L),
+          true
+        );
+      }
+    };
+    var available = new AtomicBoolean(true);
+    var client = new AiModelClient("", "model", "", 1) {
+      @Override
+      public boolean configured() {
+        return available.get();
+      }
+
+      @Override
+      public Answer summarize(
+        String question,
+        List<AiKnowledge.Source> sources
+      ) {
+        assertEquals("总结会议亮点", question);
+        assertEquals(List.of(material), sources);
+        return new Answer(
+          true,
+          "这场演示验证了从报名到现场核销的流程。",
+          List.of(material.id())
+        );
+      }
+    };
+    var api = new AiApi(store, auth, knowledge(List.of()), client, participant);
+    var session = new MockHttpSession();
+    var query = new AiApi.PlatformAsk("总结会议亮点", null);
+    var reply = api.platformAsk(query, session);
+    assertEquals("model", reply.mode());
+    assertTrue(reply.answer().contains("现场核销"));
+    assertEquals(List.of(material), reply.sources());
+    available.set(false);
+    var fallback = api.platformAsk(query, session);
+    assertEquals("faq", fallback.mode());
+    assertTrue(fallback.answer().contains("暂时无法生成"));
+    assertFalse(fallback.answer().contains(material.excerpt()));
+    assertEquals(List.of(material), fallback.sources());
+  }
+
+  @Test
+  void voiceReplyRequiresOriginalSessionAndCurrentMeetingAccess() {
+    var api = new AiApi(
+      store,
+      auth,
+      knowledge(sources),
+      new AiModelClient("", "model", "", 1),
+      participant
+    );
+    var session = new MockHttpSession();
+    var reply = api.ask(1, new AiApi.Ask("什么时候开始"), session);
+    assertEquals(reply.answer(), api.voiceAnswer(reply.replyId(), session));
+    assertEquals(
+      404,
+      assertThrows(ResponseStatusException.class, () ->
+        api.voiceAnswer(reply.replyId(), new MockHttpSession())
+      )
+        .getStatusCode()
+        .value()
+    );
+    allowed.set(false);
+    assertEquals(
+      403,
+      assertThrows(ResponseStatusException.class, () ->
+        api.voiceAnswer(reply.replyId(), session)
+      )
+        .getStatusCode()
+        .value()
+    );
+  }
+
   final AtomicBoolean allowed = new AtomicBoolean(true);
   final Store store = new Store(null) {
     @Override
@@ -44,16 +141,29 @@ class AiApiTests {
       "/?event=1"
     )
   );
-  final AiParticipant participant = new AiParticipant(store) {
+  final AgendaRecommendations recommendations = new AgendaRecommendations(
+    store
+  );
+  final AiParticipant participant = new AiParticipant(
+    store,
+    recommendations,
+    new AiKnowledge(store)
+  ) {
     @Override
-    public Direct direct(String question, long user, String model) {
+    public Direct direct(
+      String question,
+      long user,
+      String model,
+      Long eventId
+    ) {
       return null;
     }
 
     @Override
     public List<AiKnowledge.Source> context(
       String question,
-      List<AiKnowledge.Source> selected
+      List<AiKnowledge.Source> selected,
+      Long eventId
     ) {
       return selected;
     }
@@ -193,7 +303,7 @@ class AiApiTests {
       auth,
       knowledge(List.of()),
       client,
-      new AiParticipant(store)
+      new AiParticipant(store, recommendations, new AiKnowledge(store))
     );
     var reply = api.platformAsk(
       new AiApi.PlatformAsk("你是什么模型", null),
@@ -228,7 +338,7 @@ class AiApiTests {
       auth,
       knowledge(List.of()),
       client,
-      new AiParticipant(store)
+      new AiParticipant(store, recommendations, new AiKnowledge(store))
     ).platformAsk(
       new AiApi.PlatformAsk("我的账号怎么修改密码", null),
       new MockHttpSession()

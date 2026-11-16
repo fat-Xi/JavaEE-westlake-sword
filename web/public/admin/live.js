@@ -8,6 +8,7 @@ const state = (s) =>
     APPROVED: "已通过",
     REJECTED: "已驳回",
     WITHDRAWN: "已撤销",
+    REMOVED: "已删除",
     CLOSED: "已关闭",
   })[s] || s;
 const roles = {
@@ -60,6 +61,7 @@ async function run(work) {
 }
 async function load() {
   raw = await api("/admin/desk");
+  db.commentReports = raw.commentReports ?? [];
   db.users = raw.users.map((u) => ({
     ...u,
     nick: u.nick || u.name,
@@ -223,6 +225,57 @@ review = function (kind, id, pass, reason = "") {
 };
 // 原型把ID当作数字，真实记录来自不同表，使用带前缀的字符串避免碰撞。
 const originalReviews = reviews;
+function removePublishedComment(id, reportId) {
+  modal(
+    `<h2>删除评论</h2><p class="muted">这条评论及其所有回复将一并移除，作者会收到删除理由。</p>
+    <form id="remove-comment-form">
+    <label>删除理由<textarea name="reason" required maxlength="200"></textarea></label>
+    <div class="form-actions">
+    <button type="button" onclick="closeModal()">取消</button>
+    <button class="reject">确认删除</button></div></form>`,
+  );
+  $("#remove-comment-form").onsubmit = (event) => {
+    event.preventDefault();
+    const reason = new FormData(event.target).get("reason").trim();
+    if (!reason) return toast("请填写删除理由");
+    run(async () => {
+      if (reportId) {
+        await api(`/review/comment-reports/${reportId}`, "PUT", {
+          remove: true,
+          reason,
+        });
+      } else {
+        await api(`/review/posts/${id}`, "DELETE", { reason });
+      }
+      closeModal();
+      await load();
+      render();
+      toast("评论及其回复已删除");
+    });
+  };
+}
+function keepReportedComment(id) {
+  run(async () => {
+    await api(`/review/comment-reports/${id}`, "PUT", { remove: false });
+    await load();
+    render();
+    toast("举报已处理，评论已保留");
+  });
+}
+function manageQuestion(id, action) {
+  const question = db.items.find(
+    (item) => item.id === id && item.source === "question",
+  );
+  if (!question) return;
+  run(async () => {
+    await api(`/review/questions/${question.sourceId}/state`, "PUT", {
+      [action]: !question[action],
+    });
+    await load();
+    render();
+    toast("提问状态已更新");
+  });
+}
 reviews = function () {
   return originalReviews().replace(
     /(review|reject)\('([^']+)',([qpi]\d+)/g,
@@ -426,7 +479,9 @@ setInterval(async () => {
       )
       .join("");
     if (
-      ["stats", "joins", "qa", "polls", "comments", "wall"].includes(page) &&
+      ["stats", "joins", "qa", "polls", "comments", "reports", "wall"].includes(
+        page,
+      ) &&
       !$("#modal").open
     )
       render();

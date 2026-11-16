@@ -3,6 +3,12 @@ import vue from "@vitejs/plugin-vue";
 export default defineConfig({
   plugins: [vue()],
   server: {
-    proxy: { "/api": process.env.API_TARGET || "http://localhost:8080" },
+    proxy: {
+      "/api/ai/voice/live": {
+        target: process.env.API_TARGET || "http://localhost:8080",
+        ws: true,
+      },
+      "/api": process.env.API_TARGET || "http://localhost:8080",
+    },
   },
 });

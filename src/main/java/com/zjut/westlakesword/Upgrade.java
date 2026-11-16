@@ -39,8 +39,31 @@ public class Upgrade implements CommandLineRunner {
     column("events", "features", "TEXT");
     column("requests", "poll_title", "VARCHAR(120) NOT NULL DEFAULT ''");
     column("questions", "talk_id", "BIGINT NULL");
+    column("questions", "featured", "BOOLEAN NOT NULL DEFAULT FALSE");
+    column("questions", "closed", "BOOLEAN NOT NULL DEFAULT FALSE");
+    if (
+      store.count(
+        "SELECT COUNT(*) FROM information_schema.table_constraints WHERE constraint_schema=DATABASE() AND table_name='questions' AND constraint_name='fk_questions_talk'"
+      ) == 0
+    ) {
+      // 早期版本允许移除已有提问的议程，保留这些提问为全会提问。
+      store.db.update(
+        "UPDATE questions q LEFT JOIN talks t ON t.id=q.talk_id SET q.talk_id=NULL WHERE q.talk_id IS NOT NULL AND t.id IS NULL"
+      );
+      store.db.execute(
+        "ALTER TABLE questions ADD CONSTRAINT fk_questions_talk FOREIGN KEY(talk_id) REFERENCES talks(id)"
+      );
+    }
     column("posts", "anonymous", "BOOLEAN NOT NULL DEFAULT FALSE");
     column("posts", "font", "VARCHAR(20) NOT NULL DEFAULT 'sans'");
+    column("posts", "reply_to_id", "BIGINT NULL");
+    if (
+      store.count(
+        "SELECT COUNT(*) FROM information_schema.table_constraints WHERE constraint_schema=DATABASE() AND table_name='posts' AND constraint_name='fk_posts_reply'"
+      ) == 0
+    ) store.db.execute(
+      "ALTER TABLE posts ADD CONSTRAINT fk_posts_reply FOREIGN KEY(reply_to_id) REFERENCES posts(id) ON DELETE SET NULL"
+    );
     column("users", "status", "VARCHAR(20) NOT NULL DEFAULT 'APPROVED'");
     column("users", "reason", "VARCHAR(200) NOT NULL DEFAULT ''");
     column("profiles", "real_name", "VARCHAR(40) NOT NULL DEFAULT ''");

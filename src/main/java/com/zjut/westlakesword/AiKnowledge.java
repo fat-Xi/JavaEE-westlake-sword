@@ -163,7 +163,7 @@ public class AiKnowledge {
         "BOX" + eventId,
         "questions",
         "提问箱与投票规则",
-        "可提交全会问题或关联本会议议程，审核前和驳回后仅作者可见。审核通过的问题可赞同和撤销赞同，管理员可精选、答复、关闭和重开；问题关闭或会议结束后停止新增赞同，已赞同者仍可撤销。独立单选投票每人每题一次，提交后不可改票，与问题赞同分开计数。",
+        "可提交全会问题或关联本会议议程，审核前和驳回后仅作者可见。对已公开的提问，参会者可赞同或点踩，并可切换或撤销。只有对应会议主办方可以提交答复，经管理员审核后公开。参会者之间可在评论区回复交流。问题关闭或会议结束后停止新增互动，已有赞同或点踩可撤销。独立单选投票每人每题一次，提交后不可改票，与问题互动分开计数。",
         home + "&tab=questions"
       )
     );
@@ -172,20 +172,19 @@ public class AiKnowledge {
         "FILES" + eventId,
         "materials",
         "会议资料下载",
-        "会议介绍与视频页提供会议资料入口。参会者身份及会议报名均审核通过后可下载资料，下载接口会再次核验资源所属会议和访问权限。",
-        home + "&tab=intro"
+        "在会议详情的「展商内容」查看已公开的会议资料。参会者身份及会议报名均审核通过后可下载资料，下载接口会再次核验资源所属会议和访问权限。",
+        home + "&tab=content"
       )
     );
-    for (var row : store.db.queryForList(
-      "SELECT id,title,speaker,room,starts,ends,tags FROM talks WHERE event_id=? ORDER BY starts,id LIMIT 200",
-      eventId
-    )) {
+    for (var row : talks(eventId, 200)) {
       documents.add(
         new Source(
           "T" + row.get("id"),
           "talk",
           text(row, "title"),
-          "议程：" +
+          "会议：" +
+            title +
+            "\n议程：" +
             row.get("title") +
             "\n嘉宾：" +
             row.get("speaker") +
@@ -202,23 +201,17 @@ public class AiKnowledge {
         )
       );
     }
-    for (var row : store.db.queryForList(
-      "SELECT id,kind,title,body,product FROM posts WHERE event_id=? AND status='APPROVED' AND kind IN ('NEWS','RESULT','EXHIBIT') ORDER BY id DESC LIMIT 200",
-      eventId
-    )) {
+    for (var row : publishedPosts(eventId, 200)) {
       chunks(
         documents,
         "P" + row.get("id"),
         text(row, "kind").toLowerCase(Locale.ROOT),
         text(row, "title"),
         text(row, "body") + "\n" + text(row, "product"),
-        home + "&tab=content&kind=" + row.get("kind") + "#post-" + row.get("id")
+        postUrl(home, row)
       );
     }
-    for (var row : store.db.queryForList(
-      "SELECT id,body,answer FROM questions WHERE event_id=? AND status='APPROVED' AND answer IS NOT NULL AND TRIM(answer)<>'' ORDER BY id DESC LIMIT 200",
-      eventId
-    )) {
+    for (var row : answeredQuestions(eventId, 200)) {
       String body = text(row, "body");
       chunks(
         documents,
@@ -230,6 +223,115 @@ public class AiKnowledge {
       );
     }
     return rank(question, documents);
+  }
+
+  List<Source> summarySources(
+    long eventId,
+    String title,
+    String introduction,
+    String organizerHighlights
+  ) {
+    String home = "/?event=" + eventId;
+    List<Source> sources = new ArrayList<>();
+    addSummarySource(
+      sources,
+      "INTRO" + eventId,
+      "overview",
+      title + " · 会议介绍",
+      introduction,
+      home + "&tab=intro"
+    );
+    addSummarySource(
+      sources,
+      "HIGHLIGHTS" + eventId,
+      "overview",
+      title + " · 主办方发布的亮点",
+      organizerHighlights,
+      home + "&tab=intro"
+    );
+    for (var row : talks(eventId, 5)) {
+      String topic = text(row, "title").strip();
+      String tags = text(row, "tags").strip();
+      addSummarySource(
+        sources,
+        "T" + row.get("id"),
+        "talk",
+        title + " · 议程主题 " + topic,
+        tags.isEmpty() ? topic : topic + "\n主题标签 " + tags,
+        home + "&tab=talks#talk-" + row.get("id")
+      );
+    }
+    for (var row : publishedPosts(eventId, 3)) {
+      addSummarySource(
+        sources,
+        "P" + row.get("id"),
+        text(row, "kind").toLowerCase(Locale.ROOT),
+        text(row, "title"),
+        text(row, "body") + "\n" + text(row, "product"),
+        postUrl(home, row)
+      );
+    }
+    for (var row : answeredQuestions(eventId, 2)) {
+      addSummarySource(
+        sources,
+        "Q" + row.get("id"),
+        "faq",
+        "主办方答复",
+        "问题 " + text(row, "body") + "\n主办方答复 " + text(row, "answer"),
+        home + "&tab=questions#question-" + row.get("id")
+      );
+    }
+    return List.copyOf(sources);
+  }
+
+  private static void addSummarySource(
+    List<Source> sources,
+    String id,
+    String kind,
+    String title,
+    String body,
+    String url
+  ) {
+    String content = body.strip();
+    if (!content.isEmpty()) sources.add(
+      new Source(
+        id,
+        kind,
+        title,
+        content.length() <= 800 ? content : content.substring(0, 800) + "…",
+        url
+      )
+    );
+  }
+
+  private List<Map<String, Object>> talks(long eventId, int limit) {
+    return store.db.queryForList(
+      "SELECT id,title,speaker,room,starts,ends,tags FROM talks WHERE event_id=? ORDER BY starts,id LIMIT ?",
+      eventId,
+      limit
+    );
+  }
+
+  private List<Map<String, Object>> publishedPosts(long eventId, int limit) {
+    return store.db.queryForList(
+      "SELECT id,kind,title,body,product FROM posts WHERE event_id=? AND status='APPROVED' AND kind IN ('NEWS','RESULT','EXHIBIT') ORDER BY id DESC LIMIT ?",
+      eventId,
+      limit
+    );
+  }
+
+  private List<Map<String, Object>> answeredQuestions(long eventId, int limit) {
+    return store.db.queryForList(
+      "SELECT id,body,answer FROM questions WHERE event_id=? AND status='APPROVED' AND answer IS NOT NULL AND TRIM(answer)<>'' ORDER BY featured DESC,id DESC LIMIT ?",
+      eventId,
+      limit
+    );
+  }
+
+  private static String postUrl(String home, Map<String, Object> row) {
+    return (
+      home + "&tab=content&kind=" + row.get("kind") + "#post-" + row.get("id")
+    );
   }
 
   private static String text(Map<String, Object> row, String key) {

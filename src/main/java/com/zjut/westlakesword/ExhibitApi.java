@@ -883,12 +883,18 @@ public class ExhibitApi {
       date(p, "ends"),
       UUID.randomUUID().toString()
     );
-    else if (kind.equals("ANSWER")) store.db.update(
-      "UPDATE questions SET answer=? WHERE id=?",
-      str(p, "answer"),
-      num(p, "questionId")
-    );
-    else {
+    else if (kind.equals("ANSWER")) {
+      long question = num(p, "questionId");
+      store.db.update(
+        "UPDATE questions SET answer=? WHERE id=?",
+        str(p, "answer"),
+        question
+      );
+      store.note(
+        Store.num(store.one("SELECT user_id FROM questions WHERE id=?", question), "user_id"),
+        "你的会议提问已收到主办方答复，请查看会议提问箱。"
+      );
+    } else {
       store.db.update(
         "INSERT INTO polls(event_id,title,starts,ends,enabled,heading) VALUES(?,?,?,?,TRUE,?)",
         event,

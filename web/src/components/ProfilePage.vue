@@ -45,7 +45,14 @@ async function act(path, method) {
   });
 }
 async function remove(record) {
-  if (!window.confirm("确定删除这条记录？删除后会议页面也会同步移除。")) return;
+  if (
+    !window.confirm(
+      record.kind === "COMMENT"
+        ? "删除这条评论及它下面的所有回复？"
+        : "确定删除这条记录？删除后会议页面也会同步移除。",
+    )
+  )
+    return;
   await act(`/community/${record.id}`, "DELETE");
 }
 // 仅待审核内容可撤销；服务端再次核验归属及当前状态。
@@ -279,7 +286,12 @@ onMounted(() => run(load));
               <span class="review-label" :class="record.status.toLowerCase()">{{
                 states[record.status]
               }}</span>
-              <p class="pre">{{ record.body }}</p>
+              <p
+                class="pre"
+                :class="record.kind === 'WALL' ? 'font-' + record.font : undefined"
+              >
+                {{ record.body }}
+              </p>
               <small
                 >{{ postedTime(record.created) }} {{ record.reason }}</small
               >

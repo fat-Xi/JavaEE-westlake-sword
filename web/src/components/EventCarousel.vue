@@ -79,9 +79,8 @@ onBeforeUnmount(() => clearInterval(timer));
             v-for="s in slide.signatures.slice(0, 8)"
             :key="s.id"
             class="signature-note"
-            :class="'font-' + s.font"
           >
-            <p>{{ s.body }}</p>
+            <p :class="'font-' + s.font">{{ s.body }}</p>
             <small>{{ s.nick }}</small>
           </article>
           <p v-if="!slide.signatures.length">期待你的第一份祝福</p>

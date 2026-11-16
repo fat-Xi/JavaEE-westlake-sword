@@ -9,14 +9,16 @@ import {
   nextTick,
   watch,
 } from "vue";
-import { api, states, time, kinds } from "../api";
+import { api, states, time, kinds, postedTime } from "../api";
 import EventCarousel from "./EventCarousel.vue";
 import CommunityPage from "./CommunityPage.vue";
 import TicketPage from "./TicketPage.vue";
 import AttendeePoll from "./AttendeePoll.vue";
 import MediaPlayer from "./MediaPlayer.vue";
+import RecommendationPanel from "./RecommendationPanel.vue";
+import QuestionThread from "./QuestionThread.vue";
 const props = defineProps({ eventId: Number });
-const { run, busy, message, page, detailTab, user } = inject("app");
+const { run, busy, message, detailTab } = inject("app");
 const event = ref(null),
   join = ref(null),
   talks = ref([]),
@@ -24,8 +26,7 @@ const event = ref(null),
   files = ref([]),
   media = ref([]),
   questions = ref([]),
-  recommendations = ref([]),
-  votes = ref([]),
+  planRevision = ref(0),
   likes = ref([]);
 const subscribed = ref(false),
   tab = ref(detailTab.value || "intro"),
@@ -46,11 +47,27 @@ const mediaOpen = ref(null),
   postOpen = ref(null);
 const questionTalk = ref(0);
 const questionFilter = ref("全部提问");
-const visibleQuestions = computed(() =>
-  questions.value.filter(
-    (q) => questionFilter.value !== "我的提问" || q.user_id === user.value.id,
-  ),
-);
+const questionTalkFilter = ref("ALL");
+const questionState = ref("ALL");
+const questionSort = ref("hot");
+const visibleQuestions = computed(() => {
+  const rows = questions.value.filter(
+    (q) =>
+      (questionFilter.value === "我的提问"
+        ? q.mine
+        : q.status === "APPROVED") &&
+      (questionTalkFilter.value === "ALL" ||
+        (q.talk_id ?? 0) === questionTalkFilter.value) &&
+      (questionState.value === "ALL" ||
+        (questionState.value === "FEATURED" && q.featured) ||
+        (questionState.value === "ANSWERED" && !!q.answer) ||
+        (questionState.value === "UNANSWERED" && !q.answer && !q.closed) ||
+        (questionState.value === "CLOSED" && q.closed)),
+  );
+  return questionSort.value === "latest"
+    ? rows.sort((a, b) => b.id - a.id)
+    : rows;
+});
 const ticketOpen = ref(false),
   contentArea = ref(null),
   plans = ref([]);
@@ -118,7 +135,7 @@ function showContent(slide) {
   contentArea.value?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 async function submitQuestion() {
-  if (!question.value.trim()) return;
+  if (!question.value.trim() || stage(event.value) === "已结束") return;
   await run(async () => {
     await api("/questions", "POST", {
       eventId: props.eventId,
@@ -126,9 +143,15 @@ async function submitQuestion() {
       talkId: questionTalk.value || null,
     });
     question.value = "";
-    await load();
+    questionFilter.value = "我的提问";
+    questionTalkFilter.value = "ALL";
+    questionState.value = "ALL";
+    await reloadQuestions();
     message.value = "问题已提交，审核通过后展示";
   });
+}
+async function reloadQuestions() {
+  questions.value = await api(`/events/${props.eventId}/questions`);
 }
 const approved = computed(() => join.value?.status === "APPROVED");
 const stage = (row) =>
@@ -151,29 +174,19 @@ async function load() {
     ? await api(`/events/${props.eventId}/plans`)
     : [];
   if (approved.value) {
-    [
-      posts.value,
-      files.value,
-      media.value,
-      questions.value,
-      recommendations.value,
-      votes.value,
-      likes.value,
-    ] = await Promise.all([
-      api(`/events/${props.eventId}/posts`),
-      api(`/events/${props.eventId}/files`),
-      api(`/events/${props.eventId}/media`),
-      api(`/events/${props.eventId}/questions`),
-      api(`/events/${props.eventId}/recommend`),
-      api("/votes"),
-      api("/likes"),
-    ]);
+    [posts.value, files.value, media.value, questions.value, likes.value] =
+      await Promise.all([
+        api(`/events/${props.eventId}/posts`),
+        api(`/events/${props.eventId}/files`),
+        api(`/events/${props.eventId}/media`),
+        api(`/events/${props.eventId}/questions`),
+        api("/likes"),
+      ]);
   } else {
     posts.value = [];
     files.value = [];
     media.value = [];
     questions.value = [];
-    recommendations.value = [];
     tab.value = "intro";
   }
 }
@@ -181,6 +194,7 @@ async function act(path, method = "POST", data) {
   await run(async () => {
     await api(path, method, data);
     await load();
+    if (/^\/talks\/\d+\/plan$/.test(path)) planRevision.value++;
     message.value = "操作成功";
   });
 }
@@ -204,8 +218,11 @@ onMounted(() =>
   run(async () => {
     await load();
     if (!tabs.value.some(([key]) => key === tab.value)) tab.value = "intro";
+    const postSource = /^#post-(\d+)$/.exec(location.hash);
+    if (postSource && tab.value === "content")
+      postOpen.value = Number(postSource[1]);
     await nextTick();
-    if (/^#(?:post|question)-[0-9]+$/.test(location.hash))
+    if (/^#(?:post|question|talk)-[0-9]+$/.test(location.hash))
       document
         .getElementById(location.hash.slice(1))
         ?.scrollIntoView({ block: "center" });
@@ -371,6 +388,7 @@ onBeforeUnmount(() => clearInterval(timer));
         <article
           v-for="talk in talks"
           :key="talk.id"
+          :id="'talk-' + talk.id"
           class="prototype-timeline"
         >
           <div>
@@ -404,8 +422,14 @@ onBeforeUnmount(() => clearInterval(timer));
               class="blank-feature"
               aria-label="地图导航"
             ></div>
-          </div></article
-      ></template>
+          </div>
+        </article>
+        <RecommendationPanel
+          :event-id="eventId"
+          :refresh-key="planRevision"
+          @add="act(`/talks/${$event}/plan`)"
+        />
+      </template>
       <template v-if="tab === 'content' && approved"
         ><h2>从展台，到真实应用。</h2>
         <nav class="tabs">
@@ -429,6 +453,7 @@ onBeforeUnmount(() => clearInterval(timer));
           <article
             v-for="post in posts.filter((p) => p.kind === filter)"
             :key="post.id"
+            :id="'post-' + post.id"
             class="vendor-card"
           >
             <h3>{{ post.title }}</h3>
@@ -483,6 +508,35 @@ onBeforeUnmount(() => clearInterval(timer));
             >
               {{ name }}
             </button>
+            <button :disabled="busy" @click="run(reloadQuestions)">
+              刷新提问
+            </button>
+          </div>
+          <div class="form-grid">
+            <label
+              >提问范围<select v-model="questionTalkFilter">
+                <option value="ALL">全部议程</option>
+                <option :value="0">全会提问</option>
+                <option v-for="talk in talks" :key="talk.id" :value="talk.id">
+                  {{ talk.title }}
+                </option>
+              </select></label
+            >
+            <label
+              >处理状态<select v-model="questionState">
+                <option value="ALL">全部状态</option>
+                <option value="UNANSWERED">待回答</option>
+                <option value="ANSWERED">已回答</option>
+                <option value="FEATURED">精选</option>
+                <option value="CLOSED">已关闭</option>
+              </select></label
+            >
+            <label
+              >排序<select v-model="questionSort">
+                <option value="hot">精选与赞同优先</option>
+                <option value="latest">最新提问</option>
+              </select></label
+            >
           </div>
           <article
             v-for="q in visibleQuestions"
@@ -497,17 +551,32 @@ onBeforeUnmount(() => clearInterval(timer));
                 alt="提问人头像"
               />
               <h3>{{ q.name || "参会者" }}</h3>
-              <small>{{ time(q.created) }}</small>
+              <small
+                >{{ postedTime(q.created) }} ·
+                {{ q.talk_title || "全会提问" }}</small
+              >
             </div>
             <p>{{ q.body }}</p>
             <small>{{ states[q.status] }} {{ q.reason }}</small>
+            <span v-if="q.featured" class="badge">精选</span>
+            <span v-if="q.closed" class="badge">已关闭</span>
             <blockquote v-if="q.answer">主办方答复：{{ q.answer }}</blockquote>
+            <QuestionThread
+              v-if="q.status === 'APPROVED'"
+              :question="q"
+              :closed="q.closed || stage(event) === '已结束'"
+              :reload="reloadQuestions"
+            />
           </article>
           <p v-if="!visibleQuestions.length" class="empty">
             暂无提问，欢迎交流。
           </p>
         </div>
+        <p v-if="stage(event) === '已结束'" class="muted">
+          会议已结束，仍可查看已公开的问题和答复。
+        </p>
         <form
+          v-else
           class="community-composer question-composer"
           @submit.prevent="submitQuestion"
         >

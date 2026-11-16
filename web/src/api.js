@@ -10,6 +10,8 @@ export async function api(path, method = "GET", data, options = {}) {
     headers,
     body: data === undefined ? undefined : isFile ? data : JSON.stringify(data),
   });
+  if (response.ok && options.responseType === "blob") return response.blob();
+  if (response.ok && options.responseType === "stream") return response.body;
   const text = await response.text();
   let body = {};
   try {
@@ -31,6 +33,7 @@ export const states = {
   APPROVED: "已通过",
   REJECTED: "已驳回",
   CANCELLED: "已取消",
+  REMOVED: "已删除",
 };
 export const roles = {
   ADMIN: "管理员",

@@ -178,21 +178,24 @@ answerPage = function (m) {
   );
 };
 // 评论和签名始终来自公开内容，匿名签名不泄露作者身份。
+function signatureText(row) {
+  const font = ["sans", "serif", "hand", "bold", "round", "brush"].includes(row.font)
+    ? row.font
+    : "sans";
+  return `<p class="font-${font}">${esc(row.body)}</p>`;
+}
+function signatureBoard(rows) {
+  const notes = rows.slice(0, 8).map(signatureText).join("");
+  return `<div class="wall-board">${notes || "<p>期待第一份祝福</p>"}</div>`;
+}
 const earlierContent = detailContent;
 detailContent = function (m, previewing) {
   if (detailTab === 6 || detailTab === 7) {
     const wall = detailTab === 7,
       rows = m[wall ? "signatures" : "comments"] || [];
     return `<div class="interaction-feed"><h2>${wall ? "让相遇，留下回响。" : "在交流中，让观点碰撞。"}</h2>${
-      wall
-        ? `<div class="wall-board">${
-            rows
-              .slice(0, 8)
-              .map((r) => `<p>${esc(r.body)}</p>`)
-              .join("") || "<p>期待第一份祝福</p>"
-          }</div>`
-        : ""
-    }${rows.map((r) => `<article class="comment-card"><img class="avatar" src="${esc(r.avatar || "/avatar.svg")}" alt="头像"><div><strong>${esc(r.nick)}</strong><small>　${time(r.created)}</small><p>${esc(r.body)}</p>${r.product ? `<span class="badge">${esc(r.product)}</span>` : ""}</div></article>`).join("") || '<div class="empty">暂无公开记录</div>'}</div>`;
+      wall ? signatureBoard(rows) : ""
+    }${rows.map((r) => `<article class="comment-card"><img class="avatar" src="${esc(r.avatar || "/avatar.svg")}" alt="头像"><div><strong>${esc(r.nick)}</strong><small>　${time(r.created)}</small>${wall ? signatureText(r) : `<p>${esc(r.body)}</p>`}${r.product ? `<span class="badge">${esc(r.product)}</span>` : ""}</div></article>`).join("") || '<div class="empty">暂无公开记录</div>'}</div>`;
   }
   if (detailTab === 1) {
     const now = new Date();
@@ -210,19 +213,6 @@ detailContent = function (m, previewing) {
       })
       .join("")}`;
   return earlierContent(m, previewing);
-};
-const baseCarousel = carousel;
-carousel = function (m) {
-  let html = baseCarousel(m);
-  const wall = m.signatures || [];
-  html = html.replace(
-    "<p>相聚西湖，连接每一种可能。</p><p>向更可信的未来，一起出发。</p>",
-    wall
-      .slice(0, 8)
-      .map((r) => `<p>${esc(r.body)}</p>`)
-      .join("") || "<p>期待第一份祝福</p>",
-  );
-  return html;
 };
 toggleAgenda = function (button, index) {
   if (page === "preview") return toast("提交并审核通过后可添加日程");
@@ -469,12 +459,7 @@ carousel = function (m) {
           s.image
             ? `<img class="slide-image" src="${esc(s.image)}" alt="会议海报${i + 1}">`
             : s.target === 7
-              ? `<h2>${m.status === "未开始" ? "期待与你相聚" : s.title}</h2><div class="wall-board">${
-                  (m.signatures || [])
-                    .slice(0, 8)
-                    .map((r) => `<p>${esc(r.body)}</p>`)
-                    .join("") || "<p>期待第一份祝福</p>"
-                }</div>`
+              ? `<h2>${m.status === "未开始" ? "期待与你相聚" : s.title}</h2>${signatureBoard(m.signatures || [])}`
               : `<div class="slide-orbit"></div><div class="slide-copy"><span class="eyebrow">WESTLAKE SUMMIT / ${new Date(m.starts).getFullYear()}</span><h1>${esc(s.title)}</h1><p>${esc(s.target === 1 ? "安排你的参会之旅" : m.place)}</p>${s.target === 0 ? badge(m.status) : ""}<p>${s.target === 1 ? "查看议程 ↓" : "查看活动详情 ↓"}</p></div>`
         }</article>`,
     )

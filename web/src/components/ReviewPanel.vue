@@ -1,5 +1,5 @@
 <script setup>
-// 管理员统一审核内容与提问，可修订展示资料；人工答复独立于 AI 预留模块。
+// 管理员统一审核内容与提问，可修订展示资料。
 import { inject, onMounted, ref } from "vue";
 import { api, states, kinds } from "../api";
 import ContentForm from "./ContentForm.vue";
@@ -8,7 +8,6 @@ const { run, busy, message } = inject("app");
 const posts = ref([]),
   questions = ref([]),
   reasons = ref({}),
-  answers = ref({}),
   filter = ref("PENDING");
 async function load() {
   [posts.value, questions.value] = await Promise.all([
@@ -24,15 +23,6 @@ async function review(type, row, pass) {
     });
     await load();
     message.value = "审核状态已更新";
-  });
-}
-async function answer(row) {
-  await run(async () => {
-    await api(`/review/questions/${row.id}/answer`, "PUT", {
-      answer: answers.value[row.id] || row.answer,
-    });
-    await load();
-    message.value = "主办方答复已发布";
   });
 }
 onMounted(() => run(load));
@@ -116,18 +106,9 @@ onMounted(() => run(load));
               驳回 / 下架
             </button>
           </div>
-          <form
-            v-if="type === 'questions' && row.status === 'APPROVED'"
-            @submit.prevent="answer(row)"
-          >
-            <label
-              >主办方人工答复<textarea
-                v-model="answers[row.id]"
-                :placeholder="row.answer || '请输入答复'"
-                maxlength="1000"
-              ></textarea></label
-            ><button :disabled="busy">发布答复</button>
-          </form>
+          <p v-if="type === 'questions' && row.answer">
+            主办方答复：{{ row.answer }}
+          </p>
         </article>
         <p v-if="!rows.some((r) => filter === 'ALL' || r.status === filter)">
           暂无符合条件的内容

@@ -19,7 +19,8 @@ const modules = [
   ["meetings", "会议审批"],
   ["qa", "问答审批"],
   ["polls", "投票审批"],
-  ["comments", "评论审批"],
+  ["comments", "评论管理"],
+  ["reports", "评论举报"],
   ["wall", "签名墙审批"],
   ["check", "发布签到"],
   ["live", "启动直播"],
@@ -34,6 +35,7 @@ let db = {
   users: [],
   meetings: [],
   items: [],
+  commentReports: [],
   talks: [],
   sessions: [],
   logs: [],
@@ -85,14 +87,18 @@ function pending(key) {
     ? db.users.filter((u) => u.status === "待审核").length
     : key === "meetings"
       ? db.meetings.filter((m) => m.status === "待审核").length
-      : db.items.filter((i) => i.kind === key && i.status === "待审核").length;
+      : key === "reports"
+        ? db.commentReports.filter((r) => r.status === "PENDING").length
+        : db.items.filter((i) => i.kind === key && i.status === "待审核").length;
 }
 function go(key) {
   page = key;
-  tab = "待审核";
+  tab = key === "comments" ? "全部" : "待审核";
   meetingId = "";
   query = "";
   roleFilter = "全部";
+  qaTalkFilter = "ALL";
+  qaStateFilter = "ALL";
   detailId = null;
   render();
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -123,7 +129,9 @@ function render() {
           ? meetings()
           : ["qa", "polls", "comments", "wall"].includes(page)
             ? reviews()
-            : page === "check"
+            : page === "reports"
+              ? commentReports()
+              : page === "check"
               ? checkin()
               : page === "live"
                 ? '<section class="live-blank" aria-label="启动直播预留区域"></section>'
@@ -217,28 +225,106 @@ function meetingDetail() {
 function posters(m) {
   return `<div class="poster"><small>${esc(m.type)} / ${new Date(m.starts).getFullYear()}</small><h2>${posterIndex % 2 === 0 ? m.coverTitle : "让每一次交流，都有新的可能。"}</h2><p>${esc(m.title)}</p></div><div class="poster-controls"><button onclick="posterIndex=0;render()">海报 1</button><button onclick="posterIndex=1;render()">海报 2</button></div>`;
 }
-// 每个审批模块仅显示该模块存在待审核记录的会议。
+// 问答和评论管理也需要看到已经公开的内容。
 function reviewMeetings() {
   const ids = new Set(
     db.items
-      .filter((i) => i.kind === page && i.status === "待审核")
+      .filter((i) => i.kind === page && (["qa", "comments"].includes(page) || i.status === "待审核"))
       .map((i) => i.event),
   );
   return db.meetings.filter((m) => ids.has(m.id));
 }
 function meetingSelect() {
-  return `<select class="select-meeting" aria-label="选择会议" onchange="meetingId=this.value;tab='待审核';render()"><option value="">请选择会议</option>${reviewMeetings()
+  return `<select class="select-meeting" aria-label="选择会议" onchange="meetingId=this.value;tab=page==='comments'?'全部':'待审核';render()"><option value="">请选择会议</option>${reviewMeetings()
     .map(
       (m) =>
         `<option value="${m.id}" ${String(m.id) === meetingId ? "selected" : ""}>${esc(m.title)} · ${db.items.filter((i) => i.event === m.id && i.kind === page && i.status === "待审核").length} 条待审核</option>`,
     )
     .join("")}</select>`;
 }
+let qaTalkFilter = "ALL";
+let qaStateFilter = "ALL";
+function questionFilters() {
+  const talks = db.talks.filter((talk) => String(talk.event) === meetingId);
+  const states = [
+    ["ALL", "全部处理状态"],
+    ["ANSWERED", "已回答"],
+    ["UNANSWERED", "待回答"],
+    ["FEATURED", "精选"],
+    ["CLOSED", "已关闭"],
+  ];
+  const option = (value, label, selected) =>
+    `<option value="${value}" ${selected === String(value) ? "selected" : ""}>${esc(label)}</option>`;
+  return `<div class="toolbar">
+    <label>提问议程<select onchange="qaTalkFilter=this.value;render()">
+      ${option("ALL", "全部议程", qaTalkFilter)}${option("0", "全会提问", qaTalkFilter)}
+      ${talks.map((talk) => option(talk.id, talk.title, qaTalkFilter)).join("")}
+    </select></label>
+    <label>处理状态<select onchange="qaStateFilter=this.value;render()">
+      ${states.map(([value, label]) => option(value, label, qaStateFilter)).join("")}
+    </select></label>
+  </div>`;
+}
+function matchesQuestionFilter(item) {
+  if (item.source !== "question") return qaTalkFilter === "ALL" && qaStateFilter === "ALL";
+  if (qaTalkFilter !== "ALL" && String(item.talk || 0) !== qaTalkFilter) return false;
+  if (qaStateFilter === "ALL") return true;
+  return item.status === "已通过" && (
+    (qaStateFilter === "ANSWERED" && !!item.answer) ||
+    (qaStateFilter === "UNANSWERED" && !item.answer && !item.closed) ||
+    (qaStateFilter === "FEATURED" && item.featured) ||
+    (qaStateFilter === "CLOSED" && item.closed)
+  );
+}
+function questionDetails(item) {
+  if (page !== "qa" || item.source !== "question") return "";
+  const details = `<p class="muted">${Number(item.votes || 0)} 人赞同${item.featured ? " · 精选" : ""}${item.closed ? " · 已关闭" : ""}</p>`;
+  const answer = item.answer ? `<p class="note">主办方答复：${esc(item.answer)}</p>` : "";
+  if (item.status !== "已通过") return details;
+  return details + answer + `<div class="form-actions">
+    <button onclick="manageQuestion('${item.id}','featured')">${item.featured ? "取消精选" : "设为精选"}</button>
+    <button onclick="manageQuestion('${item.id}','closed')">${item.closed ? "重新开放问题" : "关闭问题"}</button>
+    <button class="reject" onclick="reject('qa','${item.id}')">下架问题</button>
+  </div>`;
+}
+function commentRemoval(item) {
+  if (page !== "comments" || item.status !== "已通过") return "";
+  return `<button class="reject" onclick="removePublishedComment(${Number(item.sourceId)})">删除评论</button>`;
+}
+function commentReports() {
+  const labels = { PENDING: "待审核", KEPT: "保留评论", REMOVED: "已删除" };
+  const tabs = ["待审核", "已处理", "全部"];
+  const rows = db.commentReports.filter((report) =>
+    tab === "全部" || (tab === "待审核") === (report.status === "PENDING"),
+  );
+  const items = rows.map((report) => {
+    const id = Number(report.id);
+    const actions = report.status === "PENDING"
+      ? `<div class="form-actions">
+          <button onclick="keepReportedComment(${id})">保留评论</button>
+          <button class="reject" onclick="removePublishedComment(${Number(report.post_id)},${id})">删除评论</button>
+        </div>`
+      : `<p class="muted">处理时间 ${fmt(report.reviewed_at)}</p>`;
+    return `<article class="item">
+      <div class="row"><strong>${esc(report.event_title)}</strong>${badge(labels[report.status])}</div>
+      <p class="muted">评论作者 ${esc(report.author)} · 举报人 ${esc(report.reporter)} · ${fmt(report.created)}</p>
+      <h3>${esc(report.body)}</h3>
+      <p class="note">举报理由：${esc(report.reason)}</p>
+      ${report.resolution ? `<p class="notice">删除理由：${esc(report.resolution)}</p>` : ""}
+      ${actions}
+    </article>`;
+  }).join("");
+  return title("评论举报", "审核收到的举报，决定保留或删除评论。") +
+    `<section class="panel">
+      <div class="tabs">${tabs.map((s) => `<button class="${tab === s ? "active" : ""}" onclick="tab='${s}';render()">${s}</button>`).join("")}</div>
+      ${items || '<p class="muted">暂无对应的举报记录。</p>'}
+    </section>`;
+}
 function reviews() {
   const labels = {
     qa: [
       "让问题与解答，有序连接。",
-      "参会者提交问题，展商提交回答；分别审核，通过后公开。",
+      "审核参会者提问和主办方提交的答复。",
     ],
     polls: [
       "倾听观点，让选择更透明。",
@@ -246,7 +332,7 @@ function reviews() {
     ],
     comments: [
       "让讨论，保有温度。",
-      "审核参会者提交的会议评论，通过后进入公开评论区。",
+      "参会者评论直接公开。可在这里删除违规评论及其回复。",
     ],
     wall: [
       "让相遇，留下真诚回响。",
@@ -260,16 +346,18 @@ function reviews() {
       `<section class="panel">${empty("暂无需要审批的会议")}</section>`
     );
   if (!choices.some((m) => String(m.id) === meetingId)) meetingId = "";
+  if (qaTalkFilter !== "ALL" && qaTalkFilter !== "0" && !db.talks.some((talk) => String(talk.id) === qaTalkFilter && String(talk.event) === meetingId)) qaTalkFilter = "ALL";
   const rows = db.items.filter(
     (i) =>
       i.kind === page &&
       String(i.event) === meetingId &&
       (tab === "全部" || i.status === tab) &&
-      (page !== "qa" || roleFilter === "全部" || i.role === roleFilter),
+      (page !== "qa" || ((roleFilter === "全部" || i.role === roleFilter) &&
+        (roleFilter === "展商" || matchesQuestionFilter(i)))),
   );
   return (
     title(...labels[page]) +
-    `<section class="panel"><div class="toolbar">${meetingSelect()}${meetingId ? states() : ""}</div>${!meetingId ? empty("请先选择需要审核的会议") : `${page === "qa" ? `<div class="tabs">${["全部", "参会者", "展商"].map((r) => `<button class="${roleFilter === r ? "active" : ""}" onclick="roleFilter='${r}';render()">${r === "参会者" ? "参会者提问" : r === "展商" ? "展商回答" : "全部申请"}</button>`).join("")}</div>` : ""}<div class="enter">${rows.map((i) => `<article class="item"><div class="row"><div><span class="avatar">${esc(i.author.slice(0, 1))}</span> <strong>${esc(i.author)}</strong> <span class="badge">${i.role}${page === "qa" ? (i.role === "展商" ? "回答" : "提问") : ""}</span></div>${badge(i.status)}</div>${i.talk ? `<p class="muted">议程：${esc(db.talks.find((t) => t.id === i.talk)?.title)}</p>` : ""}${i.question ? `<p class="note">${page === "qa" ? "原问题" : "投票题目"}：${esc(i.question)}</p>` : ""}<h3>${esc(i.body)}</h3>${i.options ? `<div class="grid">${i.options.map((o, n) => `<div class="feature">${String.fromCharCode(65 + n)} · ${esc(o)}</div>`).join("")}</div><p class="muted">${fmt(i.starts)} — ${fmt(i.ends)}</p>` : ""}${i.reason ? `<p class="notice">驳回原因：${esc(i.reason)}</p>` : ""}<div class="form-actions">${i.status === "待审核" ? `<button class="reject" onclick="reject('${page}',${i.id})">驳回</button><button class="accept" onclick="review('${page}',${i.id},true)">通过并公开</button>` : ""}</div></article>`).join("") || empty("当前没有匹配的申请")}</div>`}</section>`
+    `<section class="panel"><div class="toolbar">${meetingSelect()}${meetingId ? states() : ""}</div>${!meetingId ? empty("请先选择需要审核的会议") : `${page === "qa" ? `<div class="tabs">${["全部", "参会者", "展商"].map((r) => `<button class="${roleFilter === r ? "active" : ""}" onclick="roleFilter='${r}';render()">${r === "参会者" ? "参会者提问" : r === "展商" ? "展商回答" : "全部申请"}</button>`).join("")}</div>${roleFilter === "展商" ? "" : questionFilters()}` : ""}<div class="enter">${rows.map((i) => `<article class="item"><div class="row"><div><span class="avatar">${esc(i.author.slice(0, 1))}</span> <strong>${esc(i.author)}</strong> <span class="badge">${i.role}${page === "qa" ? (i.role === "展商" ? "回答" : "提问") : ""}</span></div>${badge(i.status)}</div>${i.talk ? `<p class="muted">议程：${esc(db.talks.find((t) => t.id === i.talk)?.title)}</p>` : ""}${i.question ? `<p class="note">${page === "qa" ? "原问题" : "投票题目"}：${esc(i.question)}</p>` : ""}<h3>${esc(i.body)}</h3>${questionDetails(i)}${i.options ? `<div class="grid">${i.options.map((o, n) => `<div class="feature">${String.fromCharCode(65 + n)} · ${esc(o)}</div>`).join("")}</div><p class="muted">${fmt(i.starts)} — ${fmt(i.ends)}</p>` : ""}${i.reason ? `<p class="notice">${i.status === "已删除" ? "删除理由" : "驳回原因"}：${esc(i.reason)}</p>` : ""}<div class="form-actions">${i.status === "待审核" ? `<button class="reject" onclick="reject('${page}',${i.id})">驳回</button><button class="accept" onclick="review('${page}',${i.id},true)">通过并公开</button>` : ""}${commentRemoval(i)}</div></article>`).join("") || empty("当前没有匹配的申请")}</div>`}</section>`
   );
 }
 function find(kind, id) {

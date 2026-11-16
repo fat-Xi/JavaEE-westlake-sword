@@ -105,6 +105,40 @@ class AiModelClientTests {
   }
 
   @Test
+  void summaryUsesTopicSynthesisInstructionsAndValidatesCitations() {
+    var agenda = new AiKnowledge.Source(
+      "T5",
+      "talk",
+      "隐私计算议程",
+      "讨论数据脱敏",
+      "/?event=1&tab=talks#talk-5"
+    );
+    content.set(
+      "{\"answerable\":true,\"answer\":\"议程关注数据脱敏。\",\"source_ids\":[\"T5\"]}"
+    );
+    var model = client(3);
+    var answer = model.summarize("总结会议亮点", List.of(agenda));
+    assertEquals(List.of("T5"), answer.sourceIds());
+    assertEquals("议程关注数据脱敏。", answer.answer());
+    var messages = json.readTree(body.get()).path("messages");
+    assertTrue(
+      messages.path(0).path("content").asText().contains("按主题归纳")
+    );
+    assertTrue(
+      messages.path(1).path("content").asText().contains("讨论数据脱敏")
+    );
+    content.set(
+      "{\"answerable\":true,\"answer\":\"会议在杭州举行。\",\"source_ids\":[\"VENUE1\"]}"
+    );
+    assertEquals(
+      "invalid_citation",
+      assertThrows(AiModelClient.Unavailable.class, () ->
+        model.summarize("总结会议亮点", List.of(agenda))
+      ).getMessage()
+    );
+  }
+
+  @Test
   void neverCallsNetworkWithoutCredentials() {
     var client = new AiModelClient("https://example.com/v1", "model", "", 2);
     assertFalse(client.configured());
